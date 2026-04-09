@@ -16,8 +16,18 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
+            set -e
             cd /opt/bot_tg
+
+            # Keep runtime files that are not stored in git.
+            if [ -f .env ]; then cp -a .env /tmp/tg_bot_env.bak; fi
+            if [ -f state.json ]; then cp -a state.json /tmp/tg_bot_state.bak; fi
+
             git fetch origin
             git reset --hard origin/main
+
+            if [ -f /tmp/tg_bot_env.bak ]; then mv /tmp/tg_bot_env.bak .env; fi
+            if [ -f /tmp/tg_bot_state.bak ]; then mv /tmp/tg_bot_state.bak state.json; fi
+
             systemctl restart tg-poll-bot
             echo "Bot deployed successfully at $(date)"

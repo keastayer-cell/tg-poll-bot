@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CraftBoard</title>
+  <meta property="og:title" content="CraftBoard" />
+  <meta property="og:description" content=" " />
+  <meta property="og:url" content="https://craftboard.online/" />
+  <meta property="og:type" content="website" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f13;
+      color: #e2e2e2;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      padding: 60px 20px;
+    }
+
+    @media (max-width: 600px) {
+      body { padding-top: 130px; }
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+
+    header h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 700;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      margin-top: 12px;
+      color: #6b7280;
+      font-size: 1rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 24px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #16161e;
+      border: 1px solid #1f1f2e;
+      border-radius: 16px;
+      padding: 28px;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      position: relative;
+      overflow: hidden;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      cursor: pointer;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #a78bfa, #60a5fa);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: #2d2d45;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+
+    .card:hover::before {
+      opacity: 1;
+    }
+
+    .card-icon {
+      font-size: 2rem;
+      margin-bottom: 16px;
+    }
+
+    .card h2 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 10px;
+    }
+
+    .card p {
+      font-size: 0.92rem;
+      color: #9ca3af;
+      line-height: 1.7;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .tag {
+      background: #1f1f2e;
+      color: #a78bfa;
+      font-size: 0.75rem;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid #2d2d45;
+    }
+
+    /* Mobile: compact list */
+    @media (max-width: 600px) {
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        max-width: 100%;
+      }
+
+      .card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 16px;
+        border-radius: 14px;
+      }
+
+      .card::before { display: none; }
+
+      .card-icon {
+        font-size: 1.4rem;
+        margin-bottom: 0;
+        flex-shrink: 0;
+      }
+
+      .card h2 {
+        font-size: 0.97rem;
+        margin-bottom: 0;
+        flex: 1;
+      }
+
+      .card p,
+      .tags,
+      .status {
+        display: none;
+      }
+
+      /* show status as small dot on the right */
+      .card .status-dot {
+        display: block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #34d399;
+        box-shadow: 0 0 5px #34d399;
+        flex-shrink: 0;
+        animation: pulse 2s infinite;
+      }
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: #34d399;
+      margin-top: 20px;
+    }
+
+    .status::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #34d399;
+      box-shadow: 0 0 6px #34d399;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 80px;
+      color: #374151;
+      font-size: 0.8rem;
+    }
+
+    /* ServerConfig badge */
+    .server-badge {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      background: #12121a;
+      border: 1px solid #1f1f2e;
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      z-index: 100;
+      cursor: pointer;
+      user-select: none;
+      max-width: calc(100vw - 32px);
+    }
+
+    @media (max-width: 600px) {
+      .server-badge {
+        top: 12px;
+        left: 12px;
+        right: auto;
+        max-width: none;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
+        padding: 8px 12px;
+      }
+      .server-badge-title {
+        width: auto;
+        margin-bottom: 0;
+        font-size: 0.68rem;
+      }
+      .server-badge-row {
+        display: none;
+      }
+      /* показываем только точку онлайн */
+      .server-badge-row:first-of-type {
+        display: flex;
+        margin-top: 0;
+      }
+      .server-badge-row:first-of-type span.dot {
+        display: block;
+      }
+    }
+
+    .server-badge:hover {
+      border-color: #2d2d45;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    .server-badge-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .server-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      color: #9ca3af;
+      margin-top: 3px;
+    }
+
+    .server-badge-row .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #34d399;
+      box-shadow: 0 0 5px #34d399;
+      flex-shrink: 0;
+      animation: pulse 2s infinite;
+    }
+
+    .server-badge-ip {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.75rem;
+      color: #60a5fa;
+    }
+
+    /* Auth modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal {
+      background: #16161e;
+      border: 1px solid #2d2d45;
+      border-radius: 18px;
+      padding: 32px 28px;
+      width: 100%;
+      max-width: 360px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+      animation: modal-in 0.18s ease;
+    }
+
+    @keyframes modal-in {
+      from { opacity: 0; transform: scale(0.95) translateY(8px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .modal-icon {
+      font-size: 2rem;
+      margin-bottom: 12px;
+    }
+
+    .modal h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 6px;
+    }
+
+    .modal-sub {
+      font-size: 0.82rem;
+      color: #6b7280;
+      margin-bottom: 24px;
+    }
+
+    .modal-input-wrap {
+      position: relative;
+      margin-bottom: 8px;
+    }
+
+    .modal-input {
+      width: 100%;
+      background: #0f0f13;
+      border: 1px solid #2d2d45;
+      border-radius: 10px;
+      padding: 12px 44px 12px 14px;
+      font-size: 0.95rem;
+      color: #e2e2e2;
+      outline: none;
+      transition: border-color 0.15s;
+      font-family: inherit;
+    }
+
+    .modal-input:focus {
+      border-color: #a78bfa;
+    }
+
+    .modal-input.error {
+      border-color: #f87171;
+      animation: shake 0.3s ease;
+    }
+
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%     { transform: translateX(-6px); }
+      60%     { transform: translateX(6px); }
+    }
+
+    .modal-toggle {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: #4b5563;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 0;
+      transition: color 0.15s;
+    }
+
+    .modal-toggle:hover { color: #9ca3af; }
+
+    .modal-error {
+      font-size: 0.78rem;
+      color: #f87171;
+      min-height: 18px;
+      margin-bottom: 16px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-primary {
+      flex: 1;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      border: none;
+      border-radius: 10px;
+      padding: 11px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #0f0f13;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      font-family: inherit;
+    }
+
+    .btn-primary:hover { opacity: 0.85; }
+
+    .btn-cancel {
+      background: #1f1f2e;
+      border: 1px solid #2d2d45;
+      border-radius: 10px;
+      padding: 11px 18px;
+      font-size: 0.9rem;
+      color: #6b7280;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }
+
+    .btn-cancel:hover { color: #9ca3af; border-color: #3d3d55; }
+  </style>
+</head>
+<body>
+
+  <!-- Auth modal -->
+  <div class="modal-overlay" id="authModal" onclick="handleOverlayClick(event)">
+    <div class="modal">
+      <div class="modal-icon">🔒</div>
+      <h3>ServerConfig</h3>
+      <p class="modal-sub">Введите пароль для доступа</p>
+      <form onsubmit="checkPassword(event)">
+        <div class="modal-input-wrap">
+          <input class="modal-input" id="pwdInput" type="password" placeholder="Пароль" autocomplete="off" autofocus />
+          <button type="button" class="modal-toggle" onclick="togglePwd()" tabindex="-1">👁</button>
+        </div>
+        <div class="modal-error" id="pwdError"></div>
+        <div class="modal-actions">
+          <button type="submit" class="btn-primary">Войти</button>
+          <button type="button" class="btn-cancel" onclick="closeModal()">Отмена</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="server-badge" onclick="openModal()">
+    <div class="server-badge-title">🖥 ServerConfig</div>
+    <div class="server-badge-row"><span class="dot"></span> Ubuntu 24.04 LTS</div>
+    <div class="server-badge-row">nginx 1.24 &nbsp;·&nbsp; certbot 2.9</div>
+    <div class="server-badge-row server-badge-ip">195.133.49.214</div>
+  </div>
+
+  <header>
+    <h1>CraftBoard</h1>
+  </header>
+
+  <div class="grid">
+
+    <a class="card" href="tg-poll-bot.html">
+      <div class="card-icon">🤖</div>
+      <h2>Telegram Poll Bot</h2>
+      <p>Бот для автоматического создания опросов в групповом чате.</p>
+      <div class="tags">
+        <span class="tag">Python</span>
+        <span class="tag">Telegram Bot API</span>
+        <span class="tag">APScheduler</span>
+        <span class="tag">VPS</span>
+      </div>
+      <div class="status">Работает на сервере</div>
+      <span class="status-dot" style="display:none"></span>
+    </a>
+
+
+  </div>
+
+  <footer>
+    &copy; 2026
+  </footer>
+
+  <script>
+    const _k = 'MjExMw==';
+
+    function openModal() {
+      const modal = document.getElementById('authModal');
+      modal.classList.add('active');
+      setTimeout(() => document.getElementById('pwdInput').focus(), 50);
+    }
+
+    function closeModal() {
+      document.getElementById('authModal').classList.remove('active');
+      document.getElementById('pwdInput').value = '';
+      document.getElementById('pwdError').textContent = '';
+      document.getElementById('pwdInput').classList.remove('error');
+    }
+
+    function handleOverlayClick(e) {
+      if (e.target === document.getElementById('authModal')) closeModal();
+    }
+
+    function togglePwd() {
+      const inp = document.getElementById('pwdInput');
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+    }
+
+    function checkPassword(e) {
+      e.preventDefault();
+      const inp = document.getElementById('pwdInput');
+      const err = document.getElementById('pwdError');
+      if (btoa(inp.value) === _k) {
+        closeModal();
+        window.location.href = 'server.html';
+      } else {
+        err.textContent = 'Неверный пароль';
+        inp.classList.remove('error');
+        void inp.offsetWidth;
+        inp.classList.add('error');
+        inp.value = '';
+      }
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeModal();
+    });
+  </script>
+
+</body>
+</html>

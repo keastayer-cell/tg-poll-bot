@@ -9,9 +9,10 @@ from telegram.ext import Application, PollAnswerHandler, CommandHandler, Context
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
-load_dotenv()
-
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE = os.getenv("ENV_FILE", ".env")
+ENV_PATH = os.path.join(_BASE_DIR, ENV_FILE)
+load_dotenv(ENV_PATH)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -32,6 +33,8 @@ ADMIN_IDS = [ADMIN_ID] + [
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 YES_THRESHOLD = int(os.getenv("YES_THRESHOLD", "10"))
 POLL_QUESTION = os.getenv("POLL_QUESTION", "Идете?")
+ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "1").lower() not in {"0", "false", "no"}
+INSTANCE_NAME = os.getenv("INSTANCE_NAME", "prod")
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
@@ -280,6 +283,10 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(application: Application):
+    if not ENABLE_SCHEDULER:
+        logger.info("Планировщик отключен (ENABLE_SCHEDULER=0).")
+        return
+
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(
         send_poll,
@@ -338,6 +345,7 @@ async def post_shutdown(application: Application):
 
 
 def main():
+    logger.info("Запуск экземпляра '%s' с env-файлом: %s", INSTANCE_NAME, ENV_PATH)
     load_state()
     proxy_url = os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
     builder = (

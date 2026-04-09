@@ -1,0 +1,13 @@
+[Unit]
+Description=Uptime Monitor (site + bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/uptime-monitor
+ExecStart=/opt/bot_tg/venv/bin/python /opt/uptime-monitor/monitor_health.py
+Environment=MONITOR_ENV_FILE=.env.monitor
+
+[Install]
+WantedBy=multi-user.target

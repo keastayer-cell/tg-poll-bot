@@ -1,0 +1,23 @@
+[
+  {
+    "id": "site-main",
+    "name": "Craftboard Website",
+    "repo": "keastayer-cell/craftboard-site",
+    "type": "url",
+    "url": "https://craftboard.online"
+  },
+  {
+    "id": "bot-systemd",
+    "name": "TG Poll Bot (systemd)",
+    "repo": "keastayer-cell/tg-poll-bot",
+    "type": "systemd",
+    "service": "tg-poll-bot"
+  },
+  {
+    "id": "bot-telegram-api",
+    "name": "TG Poll Bot API",
+    "repo": "keastayer-cell/tg-poll-bot",
+    "type": "telegram_getme",
+    "token_env_file_key": "BOT_TOKEN"
+  }
+]

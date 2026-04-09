@@ -1,0 +1,11 @@
+[Unit]
+Description=Run uptime monitor every hour
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1h
+Unit=uptime-monitor.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

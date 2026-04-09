@@ -1,1 +1,0 @@
-/Users/korytov/projects/tg-poll-bot/README.md

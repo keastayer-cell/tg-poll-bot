@@ -27,13 +27,12 @@ jobs:
         run: python3 -m py_compile bot.py && echo "Syntax OK"
 
       - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script_stop: true
-          debug: true
           script: |
             set -euo pipefail
             cd /opt/bot_tg

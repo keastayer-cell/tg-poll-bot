@@ -4,30 +4,51 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "bot.py"
+      - "requirements.txt"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-tg-poll-bot-production
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: python3 -m py_compile bot.py && echo "Syntax OK"
+
       - name: Deploy to VPS
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          script_stop: true
           script: |
-            set -e
+            set -euo pipefail
             cd /opt/bot_tg
 
-            # Keep runtime files that are not stored in git.
-            if [ -f .env ]; then cp -a .env /tmp/tg_bot_env.bak; fi
-            if [ -f state.json ]; then cp -a state.json /tmp/tg_bot_state.bak; fi
+            # Preserve runtime files not stored in git
+            [ -f .env ]       && cp -a .env       /tmp/tg_bot_env.bak
+            [ -f state.json ] && cp -a state.json /tmp/tg_bot_state.bak
 
             git fetch origin
             git reset --hard origin/main
 
-            if [ -f /tmp/tg_bot_env.bak ]; then mv /tmp/tg_bot_env.bak .env; fi
-            if [ -f /tmp/tg_bot_state.bak ]; then mv /tmp/tg_bot_state.bak state.json; fi
+            [ -f /tmp/tg_bot_env.bak ]   && mv /tmp/tg_bot_env.bak   .env
+            [ -f /tmp/tg_bot_state.bak ] && mv /tmp/tg_bot_state.bak state.json
+
+            venv/bin/pip install -q -r requirements.txt
 
             systemctl restart tg-poll-bot
-            echo "Bot deployed successfully at $(date)"
+            systemctl is-active tg-poll-bot
+            echo "Bot deployed at $(date)"

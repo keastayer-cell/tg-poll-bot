@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -72,6 +73,10 @@ polls: dict = {}
 current_poll_id: Optional[str] = None
 
 
+def current_poll_date() -> str:
+    return datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d")
+
+
 def save_state():
     try:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -110,11 +115,21 @@ def new_poll_state() -> dict:
         "notified_almost": False,
         "notified_yes": False,
         "notified_deadline": False,
+        "poll_date": current_poll_date(),
     }
 
 
 async def send_poll(bot):
     global current_poll_id
+
+    active_state = polls.get(current_poll_id) if current_poll_id else None
+    if active_state and active_state.get("poll_date") == current_poll_date():
+        logger.warning(
+            "Пропускаю создание опроса: на сегодня уже есть активный poll_id=%s",
+            current_poll_id,
+        )
+        return False
+
     message = await bot.send_poll(
         chat_id=CHAT_ID,
         question=POLL_QUESTION,
@@ -131,8 +146,6 @@ async def send_poll(bot):
     logger.info("Опрос создан, poll_id=%s, message_id=%s", poll_id, msg_id)
 
     # Уведомляем админов о запуске
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
     date_str = datetime.now(ZoneInfo(TIMEZONE)).strftime("%d.%m.%Y")
     for admin_id in ADMIN_IDS:
         try:
@@ -147,7 +160,13 @@ async def send_poll(bot):
         except Exception as e:
             logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
 
-    # Закрепляем опрос с уведомлением всех участников
+    # Сначала очищаем старые закрепы, потом закрепляем новый опрос с уведомлением.
+    try:
+        await bot.unpin_all_chat_messages(chat_id=CHAT_ID)
+        logger.info("Старые закрепы очищены")
+    except Exception as e:
+        logger.warning("Не удалось очистить закрепы: %s", e)
+
     try:
         await bot.pin_chat_message(
             chat_id=CHAT_ID,
@@ -157,6 +176,8 @@ async def send_poll(bot):
         logger.info("Опрос закреплён")
     except Exception as e:
         logger.warning("Не удалось закрепить опрос: %s", e)
+
+    return True
 
 
 async def check_deadline(bot):
@@ -289,8 +310,11 @@ async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручной запуск опроса командой /poll (только для админа)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    await send_poll(context.bot)
-    await update.message.reply_text("Опрос запущен вручную.")
+    created = await send_poll(context.bot)
+    if created:
+        await update.message.reply_text("Опрос запущен вручную.")
+    else:
+        await update.message.reply_text("Сегодняшний активный опрос уже существует.")
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):

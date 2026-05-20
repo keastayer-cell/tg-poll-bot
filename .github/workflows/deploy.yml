@@ -26,28 +26,27 @@ jobs:
       - name: Syntax check
         run: python3 -m py_compile bot.py && echo "Syntax OK"
 
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@master
+      - name: Upload bot files to VPS
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          script_stop: true
+          source: "bot.py,requirements.txt"
+          target: /opt/bot_tg
+
+      - name: Restart bot on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
           script: |
             set -euo pipefail
             cd /opt/bot_tg
 
-            # Preserve runtime files not stored in git
-            [ -f .env ]       && cp -a .env       /tmp/tg_bot_env.bak
-            [ -f state.json ] && cp -a state.json /tmp/tg_bot_state.bak
-
-            git fetch origin
-            git reset --hard origin/main
-
-            [ -f /tmp/tg_bot_env.bak ]   && mv /tmp/tg_bot_env.bak   .env
-            [ -f /tmp/tg_bot_state.bak ] && mv /tmp/tg_bot_state.bak state.json
-
             venv/bin/pip install -q -r requirements.txt
+            python3 -m py_compile bot.py
 
             systemctl restart tg-poll-bot
             systemctl is-active tg-poll-bot

@@ -6,7 +6,13 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from telegram import Update
-from telegram.ext import Application, PollAnswerHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    PollAnswerHandler,
+    PollHandler,
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
@@ -61,7 +67,9 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 # Словарь: poll_id -> данные этого конкретного опроса
 # {
 #   poll_id: {
-#       "yes_voters": {},  # {user_id: "Имя Фамилия"}
+#       "yes_voters": {},  # текущие "ДА": {user_id: "Имя Фамилия"}
+#       "yes_count": 0,
+#       "no_count": 0,
 #       "notified_almost": False,
 #       "notified_yes": False,
 #       "notified_deadline": False,
@@ -97,9 +105,13 @@ def load_state():
             data = json.load(f)
         polls = data.get("polls", {})
         current_poll_id = data.get("current_poll_id")
-        # yes_voters хранятся с int-ключами, JSON сохраняет их как строки — конвертируем
+        # yes_voters хранятся с int-ключами, JSON сохраняет их как строки.
         for state in polls.values():
-            state["yes_voters"] = {int(k): v for k, v in state["yes_voters"].items()}
+            state["yes_voters"] = {
+                int(k): v for k, v in state.get("yes_voters", {}).items()
+            }
+            state["yes_count"] = int(state.get("yes_count", len(state["yes_voters"])))
+            state["no_count"] = int(state.get("no_count", 0))
         # Загружаем сохранённое расписание, добавляя дефолты для новых ключей
         saved_cfg = data.get("schedule_config", {})
         schedule_config = {**DEFAULT_SCHEDULE, **saved_cfg}
@@ -111,12 +123,46 @@ def load_state():
 
 def new_poll_state() -> dict:
     return {
-        "yes_voters": {},  # {user_id: "Имя Фамилия"}
+        "yes_voters": {},  # текущие "ДА": {user_id: "Имя Фамилия"}
+        "yes_count": 0,
+        "no_count": 0,
         "notified_almost": False,
         "notified_yes": False,
         "notified_deadline": False,
         "poll_date": current_poll_date(),
     }
+
+
+def current_yes_count(state: dict) -> int:
+    return int(state.get("yes_count", len(state.get("yes_voters", {}))))
+
+
+async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> None:
+    yes_count = current_yes_count(state)
+
+    if yes_count >= YES_THRESHOLD - 1 and not state["notified_almost"] and not state["notified_yes"]:
+        state["notified_almost"] = True
+        save_state()
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="Братики, еще 1 и идем 💪",
+        )
+
+    if yes_count >= YES_THRESHOLD and not state["notified_yes"]:
+        state["notified_yes"] = True
+        save_state()
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="Ну все, епта, идем играть, готовьтесь 🔥",
+        )
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=f"✅ Набрано {YES_THRESHOLD} «ДА»! Все идут.",
+                )
+            except Exception as e:
+                logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
 
 
 async def send_poll(bot):
@@ -191,7 +237,7 @@ async def check_deadline(bot):
         return
     if not state["notified_deadline"]:
         state["notified_deadline"] = True
-        yes_count = len(state["yes_voters"])
+        yes_count = current_yes_count(state)
         for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(
@@ -271,32 +317,50 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         state["yes_voters"].pop(user_id, None)
     save_state()
 
-    yes_count = len(state["yes_voters"])
-    logger.info("poll_id=%s, всего «ДА»: %d, voters=%s", poll_id, yes_count, list(state["yes_voters"].values()))
+    yes_count = current_yes_count(state)
+    logger.info(
+        "poll_id=%s, агрегированных «ДА»: %d, текущих отслеженных «ДА»: %d, tracked_voters=%s",
+        poll_id,
+        yes_count,
+        len(state["yes_voters"]),
+        list(state["yes_voters"].values()),
+    )
 
-    if yes_count >= YES_THRESHOLD - 1 and not state["notified_almost"] and not state["notified_yes"]:
-        state["notified_almost"] = True
-        save_state()
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text="Братики, еще 1 и идем 💪",
-        )
 
-    if yes_count >= YES_THRESHOLD and not state["notified_yes"]:
-        state["notified_yes"] = True
-        save_state()
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text="Ну все, епта, идем играть, готовьтесь 🔥",
+async def handle_poll_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    poll = update.poll
+    state = polls.get(poll.id)
+    if state is None:
+        logger.warning("poll_id=%s не найден для poll update, игнорирую", poll.id)
+        return
+
+    yes_count = poll.options[0].voter_count if len(poll.options) > 0 else 0
+    no_count = poll.options[1].voter_count if len(poll.options) > 1 else 0
+    tracked_yes_count = len(state["yes_voters"])
+
+    state["yes_count"] = yes_count
+    state["no_count"] = no_count
+
+    # Если poll_answer для какого-то голоса был пропущен, сохраняем корректный счёт из Telegram.
+    # Список имён остаётся best-effort и может быть короче агрегированного счёта.
+    if tracked_yes_count > yes_count:
+        logger.warning(
+            "poll_id=%s: tracked yes_voters=%d больше агрегированного yes_count=%d, очищаю список имен",
+            poll.id,
+            tracked_yes_count,
+            yes_count,
         )
-        for admin_id in ADMIN_IDS:
-                try:
-                    await context.bot.send_message(
-                        chat_id=admin_id,
-                        text=f"✅ Набрано {YES_THRESHOLD} «ДА»! Все идут.",
-                    )
-                except Exception as e:
-                    logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
+        state["yes_voters"] = {}
+
+    save_state()
+    logger.info(
+        "poll_id=%s, poll update: yes=%d, no=%d, total=%d",
+        poll.id,
+        yes_count,
+        no_count,
+        poll.total_voter_count,
+    )
+    await maybe_send_threshold_notifications(context.bot, poll.id, state)
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -324,11 +388,17 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
-    yes_count = len(polls[current_poll_id]["yes_voters"])
-    names = list(polls[current_poll_id]["yes_voters"].values())
+    state = polls[current_poll_id]
+    yes_count = current_yes_count(state)
+    no_count = int(state.get("no_count", 0))
+    names = list(state["yes_voters"].values())
     names_text = "\n".join(f"{i+1}. {n}" for i, n in enumerate(names)) if names else "—"
+    tracked_hint = ""
+    if len(names) != yes_count:
+        tracked_hint = "\n\nСписок имен может быть неполным: счёт берётся из самого опроса Telegram."
     await update.message.reply_text(
-        f"«ДА»: {yes_count} / {YES_THRESHOLD}\n\n{names_text}"
+        f"«ДА»: {yes_count} / {YES_THRESHOLD}\n"
+        f"«Нет»: {no_count}\n\n{names_text}{tracked_hint}"
     )
 
 
@@ -531,6 +601,7 @@ def main():
         builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
         logger.info(f"Используется прокси: {proxy_url}")
     app = builder.build()
+    app.add_handler(PollHandler(handle_poll_update))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("poll", cmd_poll))
@@ -539,7 +610,7 @@ def main():
     app.add_handler(CommandHandler("setdays", cmd_setdays))
 
     logger.info("Бот запущен.")
-    app.run_polling(allowed_updates=["poll_answer", "message"])
+    app.run_polling(allowed_updates=["poll", "poll_answer", "message"])
 
 
 if __name__ == "__main__":

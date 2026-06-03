@@ -45,15 +45,7 @@ YES_THRESHOLD = int(os.getenv("YES_THRESHOLD", "10"))
 POLL_QUESTION = os.getenv("POLL_QUESTION", "Идете?")
 ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "1").lower() not in {"0", "false", "no"}
 INSTANCE_NAME = os.getenv("INSTANCE_NAME", "prod")
-ANNOUNCE_TEXT = (
-    "Всем привет. Меня доработали, и теперь я умею учитывать ваши +1 автоматически.\n\n"
-    "После каждого нового опроса я буду напоминать об этом сам, а пока сообщаю сейчас: "
-    "если вы хотите пригласить человека на игру, просто напишите в чат строго +1, "
-    "и я зачту этот +1 от вас в общий учет голосов как виртуальный.\n\n"
-    "Вам больше не придется считать ваши плюсы вручную. Если хотите посмотреть текущую статистику по опросу, введите /status.\n\n"
-    "Показывать виртуальные +1 прямо внутри карточки опроса Telegram я не могу. "
-    "Это особенность самого Telegram."
-)
+ANNOUNCE_PROMPT_TEXT = "Введите текст объявления следующим сообщением. Для отмены введите /cancel."
 
 DEFAULT_SCHEDULE = {
     "poll_hour": 9,
@@ -92,6 +84,7 @@ polls: dict = {}
 # poll_id последнего созданного опроса (для дедлайна 15:00)
 current_poll_id: Optional[str] = None
 PLUS_ONE_PATTERN = re.compile(r"^\+1$")
+pending_announcements: dict[int, bool] = {}
 
 
 def current_poll_date() -> str:
@@ -476,9 +469,18 @@ async def cmd_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Публикует объявление про виртуальные +1 в рабочий чат (только для админа)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    announce_text = " ".join(context.args).strip() or ANNOUNCE_TEXT
-    await context.bot.send_message(chat_id=CHAT_ID, text=announce_text)
-    await update.message.reply_text("Объявление отправлено в чат.")
+    pending_announcements[update.effective_user.id] = True
+    await update.message.reply_text(ANNOUNCE_PROMPT_TEXT)
+
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отменяет ожидающий ввод объявления (только для админа)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if pending_announcements.pop(update.effective_user.id, None):
+        await update.message.reply_text("Ввод объявления отменен.")
+        return
+    await update.message.reply_text("Сейчас нет активного ввода объявления.")
 
 
 def compact_status_text(state: dict) -> str:
@@ -561,11 +563,17 @@ async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_
     chat = update.effective_chat
     if message is None or user is None or chat is None:
         return
-    if chat.id != CHAT_ID:
-        return
 
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
+        return
+
+    if pending_announcements.pop(user.id, None):
+        await context.bot.send_message(chat_id=CHAT_ID, text=text)
+        await update.message.reply_text("Объявление отправлено в чат.")
+        return
+
+    if chat.id != CHAT_ID:
         return
 
     plus_match = PLUS_ONE_PATTERN.fullmatch(text)
@@ -788,6 +796,7 @@ def main():
     app.add_handler(CommandHandler("poll", cmd_poll))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("announce", cmd_announce))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("plus1", cmd_plus1))
     app.add_handler(CommandHandler("minus1", cmd_minus1))
     app.add_handler(CommandHandler("settime", cmd_settime))

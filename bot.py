@@ -10,8 +10,10 @@ from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
     PollAnswerHandler,
     PollHandler,
+    filters,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -438,16 +440,12 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавляет виртуальный +1 к текущему опросу (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
+async def add_manual_yes_from_text(update: Update, label: str, context: ContextTypes.DEFAULT_TYPE):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
 
     state = polls[current_poll_id]
-    label = " ".join(context.args).strip() or f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
     add_manual_yes_vote(state, label)
     save_state()
     await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
@@ -460,10 +458,7 @@ async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_minus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Убирает последний виртуальный +1 из текущего опроса (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
+async def remove_manual_yes_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
@@ -481,6 +476,52 @@ async def cmd_minus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Убрал виртуальный +1: {removed_label}\n"
         f"Теперь «ДА»: {total_yes} (из них вручную: {manual_yes_count})."
     )
+
+
+async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет виртуальный +1 к текущему опросу (только для админа)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if current_poll_id is None or current_poll_id not in polls:
+        await update.message.reply_text("Нет активного опроса.")
+        return
+    state = polls[current_poll_id]
+    label = " ".join(context.args).strip() or f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
+    await add_manual_yes_from_text(update, label, context)
+
+
+async def cmd_minus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Убирает последний виртуальный +1 из текущего опроса (только для админа)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    await remove_manual_yes_from_text(update, context)
+
+
+async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if message is None or user is None or chat is None:
+        return
+    if user.id not in ADMIN_IDS or chat.id != CHAT_ID:
+        return
+
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+
+    if text.startswith("+1"):
+        label = text[2:].strip()
+        if current_poll_id is not None and current_poll_id in polls and not label:
+            state = polls[current_poll_id]
+            label = f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
+        elif not label:
+            label = "+1 от админа"
+        await add_manual_yes_from_text(update, label, context)
+        return
+
+    if text == "-1":
+        await remove_manual_yes_from_text(update, context)
 
 
 def reschedule_jobs(scheduler, bot):
@@ -691,6 +732,7 @@ def main():
     app.add_handler(CommandHandler("minus1", cmd_minus1))
     app.add_handler(CommandHandler("settime", cmd_settime))
     app.add_handler(CommandHandler("setdays", cmd_setdays))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_plain_text))
 
     logger.info("Бот запущен.")
     app.run_polling(allowed_updates=["poll", "poll_answer", "message"])

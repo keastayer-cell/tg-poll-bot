@@ -82,7 +82,7 @@ polls: dict = {}
 
 # poll_id последнего созданного опроса (для дедлайна 15:00)
 current_poll_id: Optional[str] = None
-PLUS_ONE_PATTERN = re.compile(r"^\+\s*1(?:\s+(?P<label>.+))?$")
+PLUS_ONE_PATTERN = re.compile(r"^\+1$")
 
 
 def current_poll_date() -> str:
@@ -553,11 +553,9 @@ async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_
     plus_match = PLUS_ONE_PATTERN.fullmatch(text)
     if plus_match:
         author_name = display_name(user)
-        extra_label = (plus_match.group("label") or "").strip()
-        label = author_name if not extra_label else f"{author_name} -> {extra_label}"
         await add_manual_yes_from_text(
             update,
-            label,
+            author_name,
             context,
             confirmation_text=f"+1 от {author_name}, засчитан в учет.",
         )

@@ -122,6 +122,10 @@ def load_state():
             )
             state["yes_count"] = int(state.get("yes_count", len(state["yes_voters"])))
             state["no_count"] = int(state.get("no_count", 0))
+            state["last_total_yes_count"] = int(
+                state.get("last_total_yes_count", state["yes_count"] + len(state["manual_yes_voters"]))
+            )
+            state.setdefault("last_removed_yes_label", None)
         # Загружаем сохранённое расписание, добавляя дефолты для новых ключей
         saved_cfg = data.get("schedule_config", {})
         schedule_config = {**DEFAULT_SCHEDULE, **saved_cfg}
@@ -138,6 +142,8 @@ def new_poll_state() -> dict:
         "manual_yes_seq": 0,
         "yes_count": 0,
         "no_count": 0,
+        "last_total_yes_count": 0,
+        "last_removed_yes_label": None,
         "notified_almost": False,
         "notified_yes": False,
         "notified_deadline": False,
@@ -182,11 +188,23 @@ def remove_last_manual_yes_vote(state: dict) -> Optional[str]:
 
 
 async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> None:
+    previous_yes_count = int(state.get("last_total_yes_count", current_yes_count(state)))
     yes_count = current_yes_count(state)
+    state_changed = False
+
+    if previous_yes_count == YES_THRESHOLD and yes_count == YES_THRESHOLD - 1:
+        state["notified_yes"] = False
+        state["notified_almost"] = True
+        state_changed = True
+        removed_label = state.get("last_removed_yes_label") or "Кто-то"
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"{removed_label} слился. Нас снова не хватает.",
+        )
 
     if yes_count >= YES_THRESHOLD - 1 and not state["notified_almost"] and not state["notified_yes"]:
         state["notified_almost"] = True
-        save_state()
+        state_changed = True
         await bot.send_message(
             chat_id=CHAT_ID,
             text="Братики, еще 1 и идем 💪",
@@ -194,7 +212,7 @@ async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> 
 
     if yes_count >= YES_THRESHOLD and not state["notified_yes"]:
         state["notified_yes"] = True
-        save_state()
+        state_changed = True
         await bot.send_message(
             chat_id=CHAT_ID,
             text="Ну все, епта, идем играть, готовьтесь 🔥",
@@ -207,6 +225,10 @@ async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> 
                 )
             except Exception as e:
                 logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
+
+    state["last_total_yes_count"] = yes_count
+    state["last_removed_yes_label"] = None
+    save_state()
 
 
 async def send_poll(bot):
@@ -368,8 +390,10 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     full_name = full_name.strip() or f"id{user_id}"
     if 0 in answer.option_ids:
         state["yes_voters"][user_id] = full_name
+        save_state()
     else:
-        state["yes_voters"].pop(user_id, None)
+        removed_name = state["yes_voters"].pop(user_id, None)
+        state["last_removed_yes_label"] = removed_name or full_name
     save_state()
 
     yes_count = current_yes_count(state)
@@ -528,6 +552,7 @@ async def remove_manual_yes_from_text(update: Update, context: ContextTypes.DEFA
     if removed_label is None:
         await update.message.reply_text("Виртуальных +1 сейчас нет.")
         return
+    state["last_removed_yes_label"] = removed_label
 
     save_state()
     total_yes = current_yes_count(state)
@@ -536,6 +561,7 @@ async def remove_manual_yes_from_text(update: Update, context: ContextTypes.DEFA
         f"Убрал виртуальный +1: {removed_label}\n"
         f"Теперь «ДА»: {total_yes} (из них вручную: {manual_yes_count})."
     )
+    await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
 
 
 async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):

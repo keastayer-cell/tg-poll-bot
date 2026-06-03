@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -81,6 +82,7 @@ polls: dict = {}
 
 # poll_id последнего созданного опроса (для дедлайна 15:00)
 current_poll_id: Optional[str] = None
+PLUS_ONE_PATTERN = re.compile(r"^\+\s*1(?:\s+(?P<label>.+))?$")
 
 
 def current_poll_date() -> str:
@@ -149,6 +151,16 @@ def current_yes_count(state: dict) -> int:
 
 def current_telegram_yes_count(state: dict) -> int:
     return int(state.get("yes_count", len(state.get("yes_voters", {}))))
+
+
+def display_name(user) -> str:
+    full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
+    full_name = full_name.strip()
+    if full_name:
+        return full_name
+    if getattr(user, "username", None):
+        return f"@{user.username}"
+    return f"id{user.id}"
 
 
 def add_manual_yes_vote(state: dict, label: str) -> str:
@@ -440,7 +452,23 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def add_manual_yes_from_text(update: Update, label: str, context: ContextTypes.DEFAULT_TYPE):
+def compact_status_text(state: dict) -> str:
+    yes_count = current_yes_count(state)
+    telegram_yes_count = current_telegram_yes_count(state)
+    manual_yes_count = len(state.get("manual_yes_voters", {}))
+    no_count = int(state.get("no_count", 0))
+    return (
+        f"«ДА»: {telegram_yes_count} + {manual_yes_count} вручную = {yes_count} / {YES_THRESHOLD}\n"
+        f"«Нет»: {no_count}"
+    )
+
+
+async def add_manual_yes_from_text(
+    update: Update,
+    label: str,
+    context: ContextTypes.DEFAULT_TYPE,
+    confirmation_text: Optional[str] = None,
+):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
@@ -450,12 +478,13 @@ async def add_manual_yes_from_text(update: Update, label: str, context: ContextT
     save_state()
     await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
 
-    total_yes = current_yes_count(state)
-    manual_yes_count = len(state.get("manual_yes_voters", {}))
-    await update.message.reply_text(
-        f"Добавил виртуальный +1: {label}\n"
-        f"Теперь «ДА»: {total_yes} (из них вручную: {manual_yes_count})."
-    )
+    reply_lines = []
+    if confirmation_text:
+        reply_lines.append(confirmation_text)
+    else:
+        reply_lines.append(f"Добавил виртуальный +1: {label}")
+    reply_lines.append(compact_status_text(state))
+    await update.message.reply_text("\n".join(reply_lines))
 
 
 async def remove_manual_yes_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -503,24 +532,27 @@ async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_
     chat = update.effective_chat
     if message is None or user is None or chat is None:
         return
-    if user.id not in ADMIN_IDS or chat.id != CHAT_ID:
+    if chat.id != CHAT_ID:
         return
 
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
         return
 
-    if text.startswith("+1"):
-        label = text[2:].strip()
-        if current_poll_id is not None and current_poll_id in polls and not label:
-            state = polls[current_poll_id]
-            label = f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
-        elif not label:
-            label = "+1 от админа"
-        await add_manual_yes_from_text(update, label, context)
+    plus_match = PLUS_ONE_PATTERN.fullmatch(text)
+    if plus_match:
+        author_name = display_name(user)
+        extra_label = (plus_match.group("label") or "").strip()
+        label = author_name if not extra_label else f"{author_name} -> {extra_label}"
+        await add_manual_yes_from_text(
+            update,
+            label,
+            context,
+            confirmation_text=f"+1 от {author_name}, засчитан в учет.",
+        )
         return
 
-    if text == "-1":
+    if text == "-1" and user.id in ADMIN_IDS:
         await remove_manual_yes_from_text(update, context)
 
 

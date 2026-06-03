@@ -110,6 +110,10 @@ def load_state():
             state["yes_voters"] = {
                 int(k): v for k, v in state.get("yes_voters", {}).items()
             }
+            state.setdefault("manual_yes_voters", {})
+            state["manual_yes_seq"] = int(
+                state.get("manual_yes_seq", len(state["manual_yes_voters"]))
+            )
             state["yes_count"] = int(state.get("yes_count", len(state["yes_voters"])))
             state["no_count"] = int(state.get("no_count", 0))
         # Загружаем сохранённое расписание, добавляя дефолты для новых ключей
@@ -124,6 +128,8 @@ def load_state():
 def new_poll_state() -> dict:
     return {
         "yes_voters": {},  # текущие "ДА": {user_id: "Имя Фамилия"}
+        "manual_yes_voters": {},  # виртуальные +1: {manual_key: "Имя"}
+        "manual_yes_seq": 0,
         "yes_count": 0,
         "no_count": 0,
         "notified_almost": False,
@@ -134,7 +140,29 @@ def new_poll_state() -> dict:
 
 
 def current_yes_count(state: dict) -> int:
+    telegram_yes_count = int(state.get("yes_count", len(state.get("yes_voters", {}))))
+    manual_yes_count = len(state.get("manual_yes_voters", {}))
+    return telegram_yes_count + manual_yes_count
+
+
+def current_telegram_yes_count(state: dict) -> int:
     return int(state.get("yes_count", len(state.get("yes_voters", {}))))
+
+
+def add_manual_yes_vote(state: dict, label: str) -> str:
+    next_seq = int(state.get("manual_yes_seq", 0)) + 1
+    state["manual_yes_seq"] = next_seq
+    manual_key = f"manual:{next_seq}"
+    state.setdefault("manual_yes_voters", {})[manual_key] = label
+    return manual_key
+
+
+def remove_last_manual_yes_vote(state: dict) -> Optional[str]:
+    manual_yes_voters = state.get("manual_yes_voters", {})
+    if not manual_yes_voters:
+        return None
+    manual_key = next(reversed(manual_yes_voters))
+    return manual_yes_voters.pop(manual_key, None)
 
 
 async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> None:
@@ -390,15 +418,68 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     state = polls[current_poll_id]
     yes_count = current_yes_count(state)
+    telegram_yes_count = current_telegram_yes_count(state)
+    manual_names = list(state.get("manual_yes_voters", {}).values())
+    manual_yes_count = len(manual_names)
     no_count = int(state.get("no_count", 0))
-    names = list(state["yes_voters"].values())
-    names_text = "\n".join(f"{i+1}. {n}" for i, n in enumerate(names)) if names else "—"
+    real_names = list(state["yes_voters"].values())
+    sections = []
+    if real_names:
+        sections.append("Реальные «ДА»:\n" + "\n".join(f"{i+1}. {n}" for i, n in enumerate(real_names)))
+    if manual_names:
+        sections.append("Виртуальные "+"+1"+":\n" + "\n".join(f"{i+1}. {n}" for i, n in enumerate(manual_names)))
+    names_text = "\n\n".join(sections) if sections else "—"
     tracked_hint = ""
-    if len(names) != yes_count:
-        tracked_hint = "\n\nСписок имен может быть неполным: счёт берётся из самого опроса Telegram."
+    if len(real_names) != telegram_yes_count:
+        tracked_hint = "\n\nСписок реальных имен может быть неполным: счёт берётся из самого опроса Telegram."
     await update.message.reply_text(
-        f"«ДА»: {yes_count} / {YES_THRESHOLD}\n"
+        f"«ДА»: {telegram_yes_count} + {manual_yes_count} вручную = {yes_count} / {YES_THRESHOLD}\n"
         f"«Нет»: {no_count}\n\n{names_text}{tracked_hint}"
+    )
+
+
+async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет виртуальный +1 к текущему опросу (только для админа)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if current_poll_id is None or current_poll_id not in polls:
+        await update.message.reply_text("Нет активного опроса.")
+        return
+
+    state = polls[current_poll_id]
+    label = " ".join(context.args).strip() or f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
+    add_manual_yes_vote(state, label)
+    save_state()
+    await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
+
+    total_yes = current_yes_count(state)
+    manual_yes_count = len(state.get("manual_yes_voters", {}))
+    await update.message.reply_text(
+        f"Добавил виртуальный +1: {label}\n"
+        f"Теперь «ДА»: {total_yes} (из них вручную: {manual_yes_count})."
+    )
+
+
+async def cmd_minus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Убирает последний виртуальный +1 из текущего опроса (только для админа)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if current_poll_id is None or current_poll_id not in polls:
+        await update.message.reply_text("Нет активного опроса.")
+        return
+
+    state = polls[current_poll_id]
+    removed_label = remove_last_manual_yes_vote(state)
+    if removed_label is None:
+        await update.message.reply_text("Виртуальных +1 сейчас нет.")
+        return
+
+    save_state()
+    total_yes = current_yes_count(state)
+    manual_yes_count = len(state.get("manual_yes_voters", {}))
+    await update.message.reply_text(
+        f"Убрал виртуальный +1: {removed_label}\n"
+        f"Теперь «ДА»: {total_yes} (из них вручную: {manual_yes_count})."
     )
 
 
@@ -606,6 +687,8 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("poll", cmd_poll))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("plus1", cmd_plus1))
+    app.add_handler(CommandHandler("minus1", cmd_minus1))
     app.add_handler(CommandHandler("settime", cmd_settime))
     app.add_handler(CommandHandler("setdays", cmd_setdays))
 

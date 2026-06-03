@@ -476,7 +476,8 @@ async def cmd_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Публикует объявление про виртуальные +1 в рабочий чат (только для админа)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    await context.bot.send_message(chat_id=CHAT_ID, text=ANNOUNCE_TEXT)
+    announce_text = " ".join(context.args).strip() or ANNOUNCE_TEXT
+    await context.bot.send_message(chat_id=CHAT_ID, text=announce_text)
     await update.message.reply_text("Объявление отправлено в чат.")
 
 

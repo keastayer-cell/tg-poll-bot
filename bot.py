@@ -233,6 +233,17 @@ async def send_poll(bot):
     save_state()
     logger.info("Опрос создан, poll_id=%s, message_id=%s", poll_id, msg_id)
 
+    try:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text=(
+                "Я создал опрос, проголосуйте. Если вы хотите пригласить человека на игру, "
+                "просто в чате напишите +1 и я зачту этот +1 от вас в общий учет голосов."
+            ),
+        )
+    except Exception as e:
+        logger.warning("Не удалось отправить сообщение-инструкцию после создания опроса: %s", e)
+
     # Уведомляем админов о запуске
     date_str = datetime.now(ZoneInfo(TIMEZONE)).strftime("%d.%m.%Y")
     for admin_id in ADMIN_IDS:

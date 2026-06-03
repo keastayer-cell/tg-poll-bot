@@ -45,6 +45,15 @@ YES_THRESHOLD = int(os.getenv("YES_THRESHOLD", "10"))
 POLL_QUESTION = os.getenv("POLL_QUESTION", "Идете?")
 ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "1").lower() not in {"0", "false", "no"}
 INSTANCE_NAME = os.getenv("INSTANCE_NAME", "prod")
+ANNOUNCE_TEXT = (
+    "Всем привет. Меня доработали, и теперь я умею учитывать ваши +1 автоматически.\n\n"
+    "После каждого нового опроса я буду напоминать об этом сам, а пока сообщаю сейчас: "
+    "если вы хотите пригласить человека на игру, просто напишите в чат строго +1, "
+    "и я зачту этот +1 от вас в общий учет голосов как виртуальный.\n\n"
+    "Вам больше не придется считать ваши плюсы вручную. Если хотите посмотреть текущую статистику по опросу, введите /status.\n\n"
+    "Показывать виртуальные +1 прямо внутри карточки опроса Telegram я не могу. "
+    "Это особенность самого Telegram."
+)
 
 DEFAULT_SCHEDULE = {
     "poll_hour": 9,
@@ -463,6 +472,14 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Публикует объявление про виртуальные +1 в рабочий чат (только для админа)."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    await context.bot.send_message(chat_id=CHAT_ID, text=ANNOUNCE_TEXT)
+    await update.message.reply_text("Объявление отправлено в чат.")
+
+
 def compact_status_text(state: dict) -> str:
     yes_count = current_yes_count(state)
     telegram_yes_count = current_telegram_yes_count(state)
@@ -769,6 +786,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("poll", cmd_poll))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("announce", cmd_announce))
     app.add_handler(CommandHandler("plus1", cmd_plus1))
     app.add_handler(CommandHandler("minus1", cmd_minus1))
     app.add_handler(CommandHandler("settime", cmd_settime))

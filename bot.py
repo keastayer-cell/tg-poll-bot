@@ -461,9 +461,7 @@ async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Текущий счёт опроса командой /status (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
+    """Текущий счёт опроса командой /status (доступно всем)."""
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return

@@ -25,6 +25,7 @@
 | 2026-04-11 | Добавлены команды `/settime` и `/setdays` — изменение расписания из бота без перезапуска |
 | 2026-06-03 | Добавлены команды `/plus1` и `/minus1` — виртуальные админские `+1` для тех, кто не может проголосовать |
 | 2026-06-03 | После создания опроса бот пишет в чат подсказку, что можно добавить приглашенного через `+1` |
+| 2026-07-29 | Подготовлен новый VPS (139.100.237.243), GitHub Actions перенастроен на него |
 
 ## Что делает бот
 
@@ -184,12 +185,13 @@ cp .env.stage.example .env.stage
 ```bash
 apt-get update
 apt-get install -y python3 python3-venv
-python3 -m venv /root/venv
+mkdir -p /opt/bot_tg
+python3 -m venv /opt/bot_tg/venv
 ```
 
 ### 2. Установить зависимости
 ```bash
-/root/venv/bin/pip install python-telegram-bot==20.7 APScheduler==3.10.4 python-dotenv==1.0.0
+/opt/bot_tg/venv/bin/pip install -r /opt/bot_tg/requirements.txt
 ```
 
 ### 3. Разместить файлы
@@ -208,7 +210,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/bot_tg
-ExecStart=/root/venv/bin/python /opt/bot_tg/bot.py
+ExecStart=/opt/bot_tg/venv/bin/python /opt/bot_tg/bot.py
 Restart=always
 RestartSec=10
 EnvironmentFile=/opt/bot_tg/.env

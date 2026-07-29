@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import re
 from datetime import datetime
 from typing import Optional
@@ -24,15 +25,25 @@ ENV_FILE = os.getenv("ENV_FILE", ".env")
 ENV_PATH = os.path.join(_BASE_DIR, ENV_FILE)
 load_dotenv(ENV_PATH)
 
+LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", str(5 * 1024 * 1024)))
+LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "3"))
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(_BASE_DIR, "bot.log"), encoding="utf-8"),
+        RotatingFileHandler(
+            os.path.join(_BASE_DIR, "bot.log"),
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
+for noisy_logger in ("httpx", "httpcore", "telegram", "telegram.ext"):
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
 TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = int(os.environ["CHAT_ID"])

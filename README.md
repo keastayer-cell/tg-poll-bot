@@ -68,7 +68,12 @@ EXTRA_ADMIN_IDS=<telegram id доп. админов через запятую>
 TIMEZONE=Europe/Moscow
 YES_THRESHOLD=10
 POLL_QUESTION=Идете?
+LOG_MAX_BYTES=5242880
+LOG_BACKUP_COUNT=3
 ```
+
+Логи пишутся в `bot.log` с ротацией: по умолчанию 5 МБ на файл и 3 архивные копии.
+Шумные HTTP-логи библиотек `httpx/httpcore/telegram` приглушены до `WARNING`, чтобы не писать каждый polling-запрос и не раздувать диск.
 
 ## Управление расписанием (без перезапуска)
 

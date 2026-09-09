@@ -5,6 +5,9 @@ venv/
 __pycache__/
 *.pyc
 state.json
+state.json.bak
+.state.json.*.tmp
 bot.log
+.stage-bot.pid
 launchd.log
 launchd.error.log

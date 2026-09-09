@@ -21,7 +21,8 @@
 ## Команда запуска stage локально
 
 ```bash
-ENV_FILE=.env.stage /Users/korytov/projects/tg-poll-bot/venv/bin/python /Users/korytov/projects/tg-poll-bot/bot.py
+make setup
+./run_stage.sh
 ```
 
 ## Быстрый промпт для новой сессии

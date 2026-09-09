@@ -1,0 +1,36 @@
+[Unit]
+Description=Telegram Poll Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tg-poll-bot
+Group=tg-poll-bot
+WorkingDirectory=/opt/bot_tg/current
+EnvironmentFile=/opt/bot_tg/shared/.env
+ExecStart=/opt/bot_tg/current/venv/bin/python /opt/bot_tg/current/bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/opt/bot_tg/shared
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

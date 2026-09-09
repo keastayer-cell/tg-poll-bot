@@ -1,15 +1,17 @@
-import os
-import json
+import asyncio
 import logging
-from logging.handlers import RotatingFileHandler
 import re
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -17,16 +19,32 @@ from telegram.ext import (
     PollHandler,
     filters,
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from dotenv import load_dotenv
 
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_FILE = os.getenv("ENV_FILE", ".env")
-ENV_PATH = os.path.join(_BASE_DIR, ENV_FILE)
-load_dotenv(ENV_PATH)
+from announcements import AnnouncementManager
+from config import load_settings
+from poll_service import evaluate_threshold_transition
+from scheduling import (
+    DEFAULT_SCHEDULE,
+    SETDAYS_KEYS,
+    SETTIME_KEYS,
+    VALID_DAYS,
+    matches_schedule_day,
+    register_jobs,
+    schedule_datetime,
+)
+from storage import JsonStateRepository, StateLoadError
+from votes import (
+    add_manual_yes_vote,
+    current_telegram_yes_count,
+    current_yes_count,
+    manual_vote_labels,
+    normalize_manual_vote,
+    remove_manual_yes_vote,
+)
 
-LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", str(5 * 1024 * 1024)))
-LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "3"))
+_BASE_DIR = str(Path(__file__).resolve().parent)
+settings = load_settings(_BASE_DIR)
+settings.data_dir.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -34,9 +52,9 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         RotatingFileHandler(
-            os.path.join(_BASE_DIR, "bot.log"),
-            maxBytes=LOG_MAX_BYTES,
-            backupCount=LOG_BACKUP_COUNT,
+            str(settings.data_dir / "bot.log"),
+            maxBytes=settings.log_max_bytes,
+            backupCount=settings.log_backup_count,
             encoding="utf-8",
         ),
     ],
@@ -45,39 +63,23 @@ logger = logging.getLogger(__name__)
 for noisy_logger in ("httpx", "httpcore", "telegram", "telegram.ext"):
     logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
-TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = int(os.environ["CHAT_ID"])
-ADMIN_ID = int(os.environ["ADMIN_ID"])
-ADMIN_IDS = [ADMIN_ID] + [
-    int(x.strip()) for x in os.getenv("EXTRA_ADMIN_IDS", "").split(",") if x.strip()
-]
-TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
-YES_THRESHOLD = int(os.getenv("YES_THRESHOLD", "10"))
-POLL_QUESTION = os.getenv("POLL_QUESTION", "Идете?")
-ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "1").lower() not in {"0", "false", "no"}
-INSTANCE_NAME = os.getenv("INSTANCE_NAME", "prod")
-ANNOUNCE_PROMPT_TEXT = "Введите текст объявления следующим сообщением. Для отмены введите /cancel."
+TOKEN = settings.bot_token
+CHAT_ID = settings.chat_id
+ADMIN_IDS = list(settings.admin_ids)
+TIMEZONE = settings.timezone
+YES_THRESHOLD = settings.yes_threshold
+POLL_QUESTION = settings.poll_question
+ENABLE_SCHEDULER = settings.enable_scheduler
+INSTANCE_NAME = settings.instance_name
+ANNOUNCE_TTL_SECONDS = settings.announce_ttl_seconds
+MAX_ANNOUNCEMENT_LENGTH = 3500
+POLL_RECONCILE_DELAY_SECONDS = settings.poll_reconcile_delay_seconds
 
-DEFAULT_SCHEDULE = {
-    "poll_hour": 9,
-    "poll_minute": 50,
-    "poll_days": "wed,sun",
-    "deadline_hour": 15,
-    "deadline_minute": 0,
-    "deadline_days": "wed,sun",
-    "close_hour": 20,
-    "close_minute": 0,
-    "close_days": "wed,sun",
-    "remind_wed_hour": 19,
-    "remind_wed_minute": 45,
-    "remind_wed_days": "wed",
-    "remind_sun_hour": 18,
-    "remind_sun_minute": 15,
-    "remind_sun_days": "sun",
-}
 schedule_config: dict = dict(DEFAULT_SCHEDULE)
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+STATE_FILE = str(settings.data_dir / "state.json")
+STATE_SCHEMA_VERSION = 2
+state_repository = JsonStateRepository(STATE_FILE)
 
 # Словарь: poll_id -> данные этого конкретного опроса
 # {
@@ -94,8 +96,14 @@ polls: dict = {}
 
 # poll_id последнего созданного опроса (для дедлайна 15:00)
 current_poll_id: Optional[str] = None
+last_poll_message_id: Optional[int] = None
 PLUS_ONE_PATTERN = re.compile(r"^\+1(?:\s+(.+))?$")
-pending_announcements: dict[int, bool] = {}
+announcement_manager = AnnouncementManager(
+    admin_ids=ADMIN_IDS,
+    target_chat_id=CHAT_ID,
+    ttl_seconds=ANNOUNCE_TTL_SECONDS,
+    max_length=MAX_ANNOUNCEMENT_LENGTH,
+)
 
 
 def current_poll_date() -> str:
@@ -103,50 +111,65 @@ def current_poll_date() -> str:
 
 
 def save_state():
-    try:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                {"polls": polls, "current_poll_id": current_poll_id, "schedule_config": schedule_config},
-                f, ensure_ascii=False,
-            )
-    except Exception as e:
-        logger.warning("Не удалось сохранить состояние: %s", e)
+    state_repository.save(
+        {
+            "schema_version": STATE_SCHEMA_VERSION,
+            "polls": polls,
+            "current_poll_id": current_poll_id,
+            "last_poll_message_id": last_poll_message_id,
+            "schedule_config": schedule_config,
+        }
+    )
 
 
 def load_state():
-    global polls, current_poll_id, schedule_config
-    if not os.path.exists(STATE_FILE):
+    global polls, current_poll_id, last_poll_message_id, schedule_config
+    data = state_repository.load()
+    if data is None:
         return
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        polls = data.get("polls", {})
-        current_poll_id = data.get("current_poll_id")
-        # yes_voters хранятся с int-ключами, JSON сохраняет их как строки.
-        for state in polls.values():
-            state["yes_voters"] = {
-                int(k): v for k, v in state.get("yes_voters", {}).items()
-            }
-            state.setdefault("manual_yes_voters", {})
-            state["manual_yes_seq"] = int(
-                state.get("manual_yes_seq", len(state["manual_yes_voters"]))
-            )
-            state["yes_count"] = int(state.get("yes_count", len(state["yes_voters"])))
-            state["no_count"] = int(state.get("no_count", 0))
-            state["last_total_yes_count"] = int(
-                state.get("last_total_yes_count", state["yes_count"] + len(state["manual_yes_voters"]))
-            )
-            state.setdefault("last_removed_yes_label", None)
-        # Загружаем сохранённое расписание, добавляя дефолты для новых ключей
-        saved_cfg = data.get("schedule_config", {})
-        schedule_config = {**DEFAULT_SCHEDULE, **saved_cfg}
-        logger.info("Состояние восстановлено: current_poll_id=%s, опросов=%d", current_poll_id, len(polls))
-        logger.info("Расписание из state.json: %s", schedule_config)
-    except Exception as e:
-        logger.warning("Не удалось загрузить состояние: %s", e)
+    if state_repository.recovered_from_backup:
+        logger.warning("Основной state.json повреждён, состояние восстановлено из резервной копии")
+
+    schema_version = int(data.get("schema_version", 0))
+    if schema_version > STATE_SCHEMA_VERSION:
+        raise StateLoadError(
+            f"Версия state.json {schema_version} новее поддерживаемой {STATE_SCHEMA_VERSION}"
+        )
+    if not isinstance(data.get("polls", {}), dict):
+        raise StateLoadError("Поле polls в state.json должно быть объектом")
+    if not isinstance(data.get("schedule_config", {}), dict):
+        raise StateLoadError("Поле schedule_config в state.json должно быть объектом")
+
+    polls = data.get("polls", {})
+    current_poll_id = data.get("current_poll_id")
+    last_poll_message_id = data.get("last_poll_message_id")
+    if last_poll_message_id is None and current_poll_id in polls:
+        last_poll_message_id = polls[current_poll_id].get("message_id")
+    # yes_voters хранятся с int-ключами, JSON сохраняет их как строки.
+    for state in polls.values():
+        state["yes_voters"] = {int(k): v for k, v in state.get("yes_voters", {}).items()}
+        state.setdefault("manual_yes_voters", {})
+        state["manual_yes_voters"] = {
+            key: normalize_manual_vote(value) for key, value in state["manual_yes_voters"].items()
+        }
+        state["manual_yes_seq"] = int(state.get("manual_yes_seq", len(state["manual_yes_voters"])))
+        state["yes_count"] = int(state.get("yes_count", len(state["yes_voters"])))
+        state["no_count"] = int(state.get("no_count", 0))
+        state["last_total_yes_count"] = int(
+            state.get("last_total_yes_count", state["yes_count"] + len(state["manual_yes_voters"]))
+        )
+        state.setdefault("last_removed_yes_label", None)
+        state.setdefault("sent_reminders", [])
+    # Загружаем сохранённое расписание, добавляя дефолты для новых ключей
+    saved_cfg = data.get("schedule_config", {})
+    schedule_config = {**DEFAULT_SCHEDULE, **saved_cfg}
+    logger.info(
+        "Состояние восстановлено: current_poll_id=%s, опросов=%d", current_poll_id, len(polls)
+    )
+    logger.info("Расписание из state.json: %s", schedule_config)
 
 
-def new_poll_state() -> dict:
+def new_poll_state(poll_date: Optional[str] = None) -> dict:
     return {
         "yes_voters": {},  # текущие "ДА": {user_id: "Имя Фамилия"}
         "manual_yes_voters": {},  # виртуальные +1: {manual_key: "Имя"}
@@ -158,18 +181,9 @@ def new_poll_state() -> dict:
         "notified_almost": False,
         "notified_yes": False,
         "notified_deadline": False,
-        "poll_date": current_poll_date(),
+        "sent_reminders": [],
+        "poll_date": poll_date or current_poll_date(),
     }
-
-
-def current_yes_count(state: dict) -> int:
-    telegram_yes_count = int(state.get("yes_count", len(state.get("yes_voters", {}))))
-    manual_yes_count = len(state.get("manual_yes_voters", {}))
-    return telegram_yes_count + manual_yes_count
-
-
-def current_telegram_yes_count(state: dict) -> int:
-    return int(state.get("yes_count", len(state.get("yes_voters", {}))))
 
 
 def display_name(user) -> str:
@@ -182,85 +196,53 @@ def display_name(user) -> str:
     return f"id{user.id}"
 
 
-def add_manual_yes_vote(state: dict, label: str) -> str:
-    next_seq = int(state.get("manual_yes_seq", 0)) + 1
-    state["manual_yes_seq"] = next_seq
-    manual_key = f"manual:{next_seq}"
-    state.setdefault("manual_yes_voters", {})[manual_key] = label
-    return manual_key
-
-
-def remove_last_manual_yes_vote(state: dict) -> Optional[str]:
-    manual_yes_voters = state.get("manual_yes_voters", {})
-    if not manual_yes_voters:
-        return None
-    manual_key = next(reversed(manual_yes_voters))
-    return manual_yes_voters.pop(manual_key, None)
-
-
 async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> None:
-    previous_yes_count = int(state.get("last_total_yes_count", current_yes_count(state)))
     yes_count = current_yes_count(state)
-    state_changed = False
-
-    if yes_count < previous_yes_count and state.get("notified_yes", False):
-        removed_label = state.get("last_removed_yes_label") or "Кто-то"
-        if yes_count < YES_THRESHOLD:
-            state["notified_yes"] = False
-            state["notified_almost"] = True
-            state_changed = True
-            await bot.send_message(
-                chat_id=CHAT_ID,
-                text=(
-                    f"{removed_label} слился. Нас снова не хватает: "
-                    f"{yes_count} из {YES_THRESHOLD}."
-                ),
-            )
-        else:
-            await bot.send_message(
-                chat_id=CHAT_ID,
-                text=f"{removed_label} слился. Осталось {yes_count} «ДА», нас пока хватает.",
-            )
-
-    if yes_count >= YES_THRESHOLD - 1 and not state["notified_almost"] and not state["notified_yes"]:
-        state["notified_almost"] = True
-        state_changed = True
-        await bot.send_message(
-            chat_id=CHAT_ID,
-            text="Братики, еще 1 и идем 💪",
-        )
-
-    if yes_count >= YES_THRESHOLD and not state["notified_yes"]:
-        state["notified_yes"] = True
-        state_changed = True
-        await bot.send_message(
-            chat_id=CHAT_ID,
-            text="Ну все, епта, идем играть, готовьтесь 🔥",
-        )
-        for admin_id in ADMIN_IDS:
+    events = evaluate_threshold_transition(
+        state,
+        yes_count=yes_count,
+        threshold=YES_THRESHOLD,
+    )
+    for event in events:
+        recipients = [CHAT_ID] if event.audience == "chat" else ADMIN_IDS
+        for recipient in recipients:
             try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=f"✅ Набрано {YES_THRESHOLD} «ДА»! Все идут.",
+                await bot.send_message(chat_id=recipient, text=event.text)
+            except Exception as error:
+                logger.warning(
+                    "Не удалось отправить threshold-уведомление poll_id=%s, chat_id=%s: %s",
+                    poll_id,
+                    recipient,
+                    error,
                 )
-            except Exception as e:
-                logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
-
-    state["last_total_yes_count"] = yes_count
-    state["last_removed_yes_label"] = None
     save_state()
 
 
-async def send_poll(bot):
-    global current_poll_id
+async def reconcile_poll_decrease(bot, poll_id: str, expected_yes_count: int) -> None:
+    await asyncio.sleep(POLL_RECONCILE_DELAY_SECONDS)
+    state = polls.get(poll_id)
+    if state is None:
+        return
+    if current_telegram_yes_count(state) != expected_yes_count:
+        return
+    await maybe_send_threshold_notifications(bot, poll_id, state)
 
+
+async def send_poll(bot, poll_date: Optional[str] = None):
+    global current_poll_id, last_poll_message_id
+
+    target_date = poll_date or current_poll_date()
     active_state = polls.get(current_poll_id) if current_poll_id else None
-    if active_state and active_state.get("poll_date") == current_poll_date():
+    if active_state and active_state.get("poll_date") == target_date:
         logger.warning(
             "Пропускаю создание опроса: на сегодня уже есть активный poll_id=%s",
             current_poll_id,
         )
         return False
+
+    previous_message_id = last_poll_message_id
+    if previous_message_id is None and active_state:
+        previous_message_id = active_state.get("message_id")
 
     message = await bot.send_poll(
         chat_id=CHAT_ID,
@@ -271,9 +253,10 @@ async def send_poll(bot):
     )
     poll_id = message.poll.id
     msg_id = message.message_id
-    polls[poll_id] = new_poll_state()
+    polls[poll_id] = new_poll_state(target_date)
     polls[poll_id]["message_id"] = msg_id
     current_poll_id = poll_id
+    last_poll_message_id = msg_id
     save_state()
     logger.info("Опрос создан, poll_id=%s, message_id=%s", poll_id, msg_id)
 
@@ -299,7 +282,7 @@ async def send_poll(bot):
             await bot.send_message(
                 chat_id=admin_id,
                 text=(
-                    f"📋 Я запустил опрос \"{date_str}\".\n"
+                    f'📋 Я запустил опрос "{date_str}".\n'
                     f"ID опроса: {poll_id}\n\n"
                     f"Я буду сообщать Вам о его результатах."
                 ),
@@ -307,12 +290,16 @@ async def send_poll(bot):
         except Exception as e:
             logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
 
-    # Сначала очищаем старые закрепы, потом закрепляем новый опрос с уведомлением.
-    try:
-        await bot.unpin_all_chat_messages(chat_id=CHAT_ID)
-        logger.info("Старые закрепы очищены")
-    except Exception as e:
-        logger.warning("Не удалось очистить закрепы: %s", e)
+    # Снимаем только предыдущий опрос, не затрагивая остальные закрепы группы.
+    if previous_message_id and previous_message_id != msg_id:
+        try:
+            await bot.unpin_chat_message(
+                chat_id=CHAT_ID,
+                message_id=previous_message_id,
+            )
+            logger.info("Предыдущий опрос откреплён: message_id=%s", previous_message_id)
+        except Exception as e:
+            logger.warning("Не удалось открепить предыдущий опрос: %s", e)
 
     try:
         await bot.pin_chat_message(
@@ -338,21 +325,19 @@ async def check_deadline(bot):
         return
     if not state["notified_deadline"]:
         state["notified_deadline"] = True
+        save_state()
         yes_count = current_yes_count(state)
         for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(
                     chat_id=admin_id,
-                    text=(
-                        f"⚠️ 15:00 — в опросе только {yes_count} «ДА» "
-                        f"из {YES_THRESHOLD} нужных."
-                    ),
+                    text=(f"⚠️ 15:00 — в опросе только {yes_count} «ДА» из {YES_THRESHOLD} нужных."),
                 )
             except Exception as e:
                 logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
 
 
-async def remind_game(bot):
+async def remind_game(bot, reminder_key: str):
     """Напоминание об игре — только если набрано 10+ ДА."""
     if current_poll_id is None:
         return
@@ -361,11 +346,16 @@ async def remind_game(bot):
         return
     if not state["notified_yes"]:
         return
+    sent_reminders = state.setdefault("sent_reminders", [])
+    if reminder_key in sent_reminders:
+        return
     try:
         await bot.send_message(
             chat_id=CHAT_ID,
             text="Мужчины, напоминаю что сегодня вы играете. Всем приятной игры и без травм 🏃",
         )
+        sent_reminders.append(reminder_key)
+        save_state()
         logger.info("Напоминание об игре отправлено")
     except Exception as e:
         logger.warning("Не удалось отправить напоминание: %s", e)
@@ -387,11 +377,15 @@ async def close_poll(bot):
             logger.info("Опрос poll_id=%s закрыт", current_poll_id)
         except Exception as e:
             logger.warning("Не удалось закрыть опрос: %s", e)
+            state["close_failed"] = True
+            save_state()
+            return False
     # Чистим состояние
     polls.pop(current_poll_id, None)
     current_poll_id = None
     save_state()
     logger.info("Состояние очищено")
+    return True
 
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -401,7 +395,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     logger.info(
         "Ответ: poll_id=%s, user_id=%s, options=%s",
-        poll_id, user_id, answer.option_ids,
+        poll_id,
+        user_id,
+        answer.option_ids,
     )
 
     state = polls.get(poll_id)
@@ -410,11 +406,12 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     # option_ids[0] = "ДА", option_ids[1] = "Нет"
-    full_name = (answer.user.first_name or "") + (" " + answer.user.last_name if answer.user.last_name else "")
+    full_name = (answer.user.first_name or "") + (
+        " " + answer.user.last_name if answer.user.last_name else ""
+    )
     full_name = full_name.strip() or f"id{user_id}"
     if 0 in answer.option_ids:
         state["yes_voters"][user_id] = full_name
-        save_state()
     else:
         removed_name = state["yes_voters"].pop(user_id, None)
         state["last_removed_yes_label"] = removed_name or full_name
@@ -440,20 +437,20 @@ async def handle_poll_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
     yes_count = poll.options[0].voter_count if len(poll.options) > 0 else 0
     no_count = poll.options[1].voter_count if len(poll.options) > 1 else 0
     tracked_yes_count = len(state["yes_voters"])
+    previous_yes_count = current_telegram_yes_count(state)
 
     state["yes_count"] = yes_count
     state["no_count"] = no_count
 
-    # Если poll_answer для какого-то голоса был пропущен, сохраняем корректный счёт из Telegram.
-    # Список имён остаётся best-effort и может быть короче агрегированного счёта.
+    # Poll и PollAnswer могут прийти в разном порядке. Не очищаем известные имена,
+    # пока отдельное PollAnswer-обновление может ещё находиться в очереди.
     if tracked_yes_count > yes_count:
         logger.warning(
-            "poll_id=%s: tracked yes_voters=%d больше агрегированного yes_count=%d, очищаю список имен",
+            "poll_id=%s: tracked yes_voters=%d больше агрегированного yes_count=%d, ожидаю PollAnswer",
             poll.id,
             tracked_yes_count,
             yes_count,
         )
-        state["yes_voters"] = {}
 
     save_state()
     logger.info(
@@ -463,7 +460,14 @@ async def handle_poll_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
         no_count,
         poll.total_voter_count,
     )
-    await maybe_send_threshold_notifications(context.bot, poll.id, state)
+    if yes_count < previous_yes_count:
+        context.application.create_task(
+            reconcile_poll_decrease(context.bot, poll.id, yes_count),
+            name=f"reconcile-poll-{poll.id}-{yes_count}",
+        )
+    else:
+        await maybe_send_threshold_notifications(context.bot, poll.id, state)
+
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -492,41 +496,32 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = polls[current_poll_id]
     yes_count = current_yes_count(state)
     telegram_yes_count = current_telegram_yes_count(state)
-    manual_names = list(state.get("manual_yes_voters", {}).values())
+    manual_names = manual_vote_labels(state)
     manual_yes_count = len(manual_names)
     no_count = int(state.get("no_count", 0))
     real_names = list(state["yes_voters"].values())
     sections = []
     if real_names:
-        sections.append("Реальные «ДА»:\n" + "\n".join(f"{i+1}. {n}" for i, n in enumerate(real_names)))
+        sections.append(
+            "Реальные «ДА»:\n" + "\n".join(f"{i + 1}. {n}" for i, n in enumerate(real_names))
+        )
     if manual_names:
-        sections.append("Виртуальные "+"+1"+":\n" + "\n".join(f"{i+1}. {n}" for i, n in enumerate(manual_names)))
+        sections.append(
+            "Виртуальные "
+            + "+1"
+            + ":\n"
+            + "\n".join(f"{i + 1}. {n}" for i, n in enumerate(manual_names))
+        )
     names_text = "\n\n".join(sections) if sections else "—"
     tracked_hint = ""
     if len(real_names) != telegram_yes_count:
-        tracked_hint = "\n\nСписок реальных имен может быть неполным: счёт берётся из самого опроса Telegram."
+        tracked_hint = (
+            "\n\nСписок реальных имен может быть неполным: счёт берётся из самого опроса Telegram."
+        )
     await update.message.reply_text(
         f"«ДА»: {telegram_yes_count} + {manual_yes_count} вручную = {yes_count} / {YES_THRESHOLD}\n"
         f"«Нет»: {no_count}\n\n{names_text}{tracked_hint}"
     )
-
-
-async def cmd_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Публикует объявление про виртуальные +1 в рабочий чат (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    pending_announcements[update.effective_user.id] = True
-    await update.message.reply_text(ANNOUNCE_PROMPT_TEXT)
-
-
-async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отменяет ожидающий ввод объявления (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    if pending_announcements.pop(update.effective_user.id, None):
-        await update.message.reply_text("Ввод объявления отменен.")
-        return
-    await update.message.reply_text("Сейчас нет активного ввода объявления.")
 
 
 def compact_status_text(state: dict) -> str:
@@ -545,13 +540,22 @@ async def add_manual_yes_from_text(
     label: str,
     context: ContextTypes.DEFAULT_TYPE,
     confirmation_text: Optional[str] = None,
+    source: str = "plain_text",
 ):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
 
     state = polls[current_poll_id]
-    add_manual_yes_vote(state, label)
+    user = update.effective_user
+    add_manual_yes_vote(
+        state,
+        label,
+        added_by_user_id=user.id if user else None,
+        added_by_name=display_name(user) if user else None,
+        source=source,
+        timezone=TIMEZONE,
+    )
     save_state()
     await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
 
@@ -564,16 +568,22 @@ async def add_manual_yes_from_text(
     await update.message.reply_text("\n".join(reply_lines))
 
 
-async def remove_manual_yes_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_manual_yes_from_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    query: Optional[str] = None,
+):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
 
     state = polls[current_poll_id]
-    removed_label = remove_last_manual_yes_vote(state)
-    if removed_label is None:
-        await update.message.reply_text("Виртуальных +1 сейчас нет.")
+    removed_vote = remove_manual_yes_vote(state, query)
+    if removed_vote is None:
+        message = f"Виртуальный +1 «{query}» не найден." if query else "Виртуальных +1 сейчас нет."
+        await update.message.reply_text(message)
         return
+    removed_label = removed_vote["label"]
     state["last_removed_yes_label"] = removed_label
 
     save_state()
@@ -594,15 +604,18 @@ async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет активного опроса.")
         return
     state = polls[current_poll_id]
-    label = " ".join(context.args).strip() or f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
-    await add_manual_yes_from_text(update, label, context)
+    label = (
+        " ".join(context.args).strip() or f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
+    )
+    await add_manual_yes_from_text(update, label, context, source="admin_command")
 
 
 async def cmd_minus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Убирает последний виртуальный +1 из текущего опроса (только для админа)."""
     if update.effective_user.id not in ADMIN_IDS:
         return
-    await remove_manual_yes_from_text(update, context)
+    query = " ".join(context.args).strip() or None
+    await remove_manual_yes_from_text(update, context, query)
 
 
 async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -616,9 +629,7 @@ async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_
     if not text or text.startswith("/"):
         return
 
-    if pending_announcements.pop(user.id, None):
-        await context.bot.send_message(chat_id=CHAT_ID, text=text)
-        await update.message.reply_text("Объявление отправлено в чат.")
+    if await announcement_manager.handle_text(update, context):
         return
 
     if chat.id != CHAT_ID:
@@ -653,38 +664,51 @@ def reschedule_jobs(scheduler, bot):
             scheduler.remove_job(job_id)
         except Exception:
             pass
+    register_jobs(
+        scheduler,
+        bot,
+        schedule_config,
+        send_poll=send_poll,
+        check_deadline=check_deadline,
+        close_poll=close_poll,
+        remind_game=remind_game,
+    )
+    logger.info("Расписание пересоздано: %s", schedule_config)
+
+
+async def reconcile_schedule(bot, now: Optional[datetime] = None) -> None:
+    now = now or datetime.now(ZoneInfo(TIMEZONE))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo(TIMEZONE))
+    poll_date = now.strftime("%Y-%m-%d")
     cfg = schedule_config
-    scheduler.add_job(
-        send_poll, "cron", id="job_poll",
-        day_of_week=cfg["poll_days"],
-        hour=cfg["poll_hour"], minute=cfg["poll_minute"],
-        args=[bot], misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        check_deadline, "cron", id="job_deadline",
-        day_of_week=cfg["deadline_days"],
-        hour=cfg["deadline_hour"], minute=cfg["deadline_minute"],
-        args=[bot], misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        close_poll, "cron", id="job_close",
-        day_of_week=cfg["close_days"],
-        hour=cfg["close_hour"], minute=cfg["close_minute"],
-        args=[bot], misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        remind_game, "cron", id="job_remind_wed",
-        day_of_week=cfg["remind_wed_days"],
-        hour=cfg["remind_wed_hour"], minute=cfg["remind_wed_minute"],
-        args=[bot], misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        remind_game, "cron", id="job_remind_sun",
-        day_of_week=cfg["remind_sun_days"],
-        hour=cfg["remind_sun_hour"], minute=cfg["remind_sun_minute"],
-        args=[bot], misfire_grace_time=3600,
-    )
-    logger.info("Расписание пересоздано: %s", cfg)
+
+    poll_at = schedule_datetime(now, cfg["poll_hour"], cfg["poll_minute"])
+    deadline_at = schedule_datetime(now, cfg["deadline_hour"], cfg["deadline_minute"])
+    close_at = schedule_datetime(now, cfg["close_hour"], cfg["close_minute"])
+    close_is_today = matches_schedule_day(now, cfg["close_days"])
+    before_close = not close_is_today or now < close_at
+
+    if matches_schedule_day(now, cfg["poll_days"]) and poll_at <= now and before_close:
+        await send_poll(bot, poll_date=poll_date)
+
+    state = polls.get(current_poll_id) if current_poll_id else None
+    active_today = state is not None and state.get("poll_date") == poll_date
+    if active_today and before_close:
+        if matches_schedule_day(now, cfg["deadline_days"]) and deadline_at <= now:
+            await check_deadline(bot)
+
+        for reminder_key in ("remind_wed", "remind_sun"):
+            reminder_at = schedule_datetime(
+                now,
+                cfg[f"{reminder_key}_hour"],
+                cfg[f"{reminder_key}_minute"],
+            )
+            if matches_schedule_day(now, cfg[f"{reminder_key}_days"]) and reminder_at <= now:
+                await remind_game(bot, reminder_key)
+
+    if close_is_today and close_at <= now and state is not None:
+        await close_poll(bot)
 
 
 async def post_init(application: Application):
@@ -696,16 +720,8 @@ async def post_init(application: Application):
     reschedule_jobs(scheduler, application.bot)
     scheduler.start()
     application.bot_data["scheduler"] = scheduler
+    await reconcile_schedule(application.bot)
     logger.info("Планировщик запущен.")
-
-
-SETTIME_KEYS = {
-    "poll":        ("poll_hour",        "poll_minute",        "опрос (ср/вс)"),
-    "deadline":    ("deadline_hour",    "deadline_minute",    "дедлайн (ср/вс)"),
-    "close":       ("close_hour",       "close_minute",       "закрытие опроса (ср/вс)"),
-    "remind_wed":  ("remind_wed_hour",  "remind_wed_minute",  "напоминание среда"),
-    "remind_sun":  ("remind_sun_hour",  "remind_sun_minute",  "напоминание воскресенье"),
-}
 
 
 def _schedule_text() -> str:
@@ -769,17 +785,6 @@ async def cmd_settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
-
-SETDAYS_KEYS = {
-    "poll":       "poll_days",
-    "deadline":   "deadline_days",
-    "close":      "close_days",
-    "remind_wed": "remind_wed_days",
-    "remind_sun": "remind_sun_days",
-}
-
-
 async def cmd_setdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Изменяет дни недели расписания. /setdays [ключ] [mon,tue,...]"""
     if update.effective_user.id not in ADMIN_IDS:
@@ -803,7 +808,7 @@ async def cmd_setdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invalid = [d for d in parts if d not in VALID_DAYS]
     if not parts or invalid:
         await update.message.reply_text(
-            f"Неверные дни: `{',' .join(invalid) if invalid else '(пусто)'}`.\n"
+            f"Неверные дни: `{','.join(invalid) if invalid else '(пусто)'}`.\n"
             "Допустимые: `mon tue wed thu fri sat sun`",
             parse_mode="Markdown",
         )
@@ -831,35 +836,41 @@ async def post_shutdown(application: Application):
         scheduler.shutdown()
 
 
-def main():
-    logger.info("Запуск экземпляра '%s' с env-файлом: %s", INSTANCE_NAME, ENV_PATH)
-    load_state()
-    proxy_url = os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
-    builder = (
-        Application.builder()
-        .token(TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error(
+        "Необработанная ошибка при обработке Telegram update=%r",
+        update,
+        exc_info=context.error,
     )
-    if proxy_url:
-        builder = builder.proxy(proxy_url).get_updates_proxy(proxy_url)
-        logger.info(f"Используется прокси: {proxy_url}")
+
+
+def main():
+    logger.info("Запуск экземпляра '%s' с env-файлом: %s", INSTANCE_NAME, settings.env_path)
+    load_state()
+    builder = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown)
+    if settings.proxy_url:
+        builder = builder.proxy(settings.proxy_url).get_updates_proxy(settings.proxy_url)
+        logger.info("Используется прокси")
     app = builder.build()
     app.add_handler(PollHandler(handle_poll_update))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("poll", cmd_poll))
     app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("announce", cmd_announce))
-    app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("announce", announcement_manager.start))
+    app.add_handler(CommandHandler("cancel", announcement_manager.cancel))
     app.add_handler(CommandHandler("plus1", cmd_plus1))
     app.add_handler(CommandHandler("minus1", cmd_minus1))
     app.add_handler(CommandHandler("settime", cmd_settime))
     app.add_handler(CommandHandler("setdays", cmd_setdays))
+    app.add_handler(
+        CallbackQueryHandler(announcement_manager.handle_callback, pattern=r"^announce:")
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_plain_text))
+    app.add_error_handler(handle_error)
 
     logger.info("Бот запущен.")
-    app.run_polling(allowed_updates=["poll", "poll_answer", "message"])
+    app.run_polling(allowed_updates=["poll", "poll_answer", "message", "callback_query"])
 
 
 if __name__ == "__main__":

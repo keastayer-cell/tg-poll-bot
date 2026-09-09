@@ -40,10 +40,10 @@ jobs:
 
       - name: Verify release
         run: |
-          ruff check *.py tests
-          ruff format --check *.py tests
+          ruff check *.py deploy tests
+          ruff format --check *.py deploy tests
           pytest
-          python -m py_compile *.py
+          python -m py_compile *.py deploy/*.py
 
       - name: Upload bot files to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -51,7 +51,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: "announcements.py,bot.py,config.py,messages.py,models.py,poll_service.py,scheduling.py,storage.py,votes.py,requirements.txt"
+          source: "announcements.py,bot.py,config.py,health.py,messages.py,models.py,poll_service.py,scheduling.py,storage.py,votes.py,deploy/check_bot_health.py,requirements.txt"
           target: /opt/bot_tg
 
       - name: Restart bot on VPS
@@ -67,6 +67,18 @@ jobs:
             venv/bin/pip install -q -r requirements.txt
             venv/bin/python -m py_compile *.py
 
+            export BOT_HEALTH_FILE=/opt/bot_tg/health.json
+            export BOT_HEALTH_NOT_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%S%z)"
             systemctl restart tg-poll-bot
             systemctl is-active tg-poll-bot
+            for attempt in $(seq 1 15); do
+              if venv/bin/python deploy/check_bot_health.py; then
+                break
+              fi
+              if [ "$attempt" -eq 15 ]; then
+                echo "Bot health-check failed" >&2
+                exit 1
+              fi
+              sleep 1
+            done
             echo "Bot deployed at $(date)"

@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from announcements import AnnouncementManager
 from config import load_settings
+from health import HealthReporter
 from poll_service import evaluate_threshold_transition
 from scheduling import (
     DEFAULT_SCHEDULE,
@@ -80,6 +81,7 @@ schedule_config: dict = dict(DEFAULT_SCHEDULE)
 STATE_FILE = str(settings.data_dir / "state.json")
 STATE_SCHEMA_VERSION = 2
 state_repository = JsonStateRepository(STATE_FILE)
+health_reporter = HealthReporter(str(settings.data_dir / "health.json"))
 
 # Словарь: poll_id -> данные этого конкретного опроса
 # {
@@ -711,6 +713,19 @@ async def reconcile_schedule(bot, now: Optional[datetime] = None) -> None:
         await close_poll(bot)
 
 
+async def check_bot_health(application: Application) -> None:
+    scheduler = application.bot_data.get("scheduler")
+    scheduler_running = bool(scheduler and scheduler.running)
+    healthy = await health_reporter.probe(
+        application.bot,
+        instance_name=INSTANCE_NAME,
+        scheduler_running=scheduler_running,
+        active_poll_id=current_poll_id,
+    )
+    if not healthy:
+        logger.warning("Health-check Telegram API завершился ошибкой")
+
+
 async def post_init(application: Application):
     if not ENABLE_SCHEDULER:
         logger.info("Планировщик отключен (ENABLE_SCHEDULER=0).")
@@ -718,8 +733,18 @@ async def post_init(application: Application):
 
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     reschedule_jobs(scheduler, application.bot)
+    scheduler.add_job(
+        check_bot_health,
+        "interval",
+        id="job_health",
+        seconds=settings.healthcheck_interval_seconds,
+        args=[application],
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     application.bot_data["scheduler"] = scheduler
+    await check_bot_health(application)
     await reconcile_schedule(application.bot)
     logger.info("Планировщик запущен.")
 

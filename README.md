@@ -55,6 +55,8 @@ tg-poll-bot/
 ├── .env.stage.example
 ├── run_stage.sh    # локальный запуск stage-бота
 ├── storage.py      # атомарное хранение состояния
+├── health.py       # прикладной heartbeat
+├── deploy/         # systemd, health-check и release rollback
 ├── tests/          # автоматические тесты
 ├── state.json      # состояние опросов
 ├── bot.log         # лог бота
@@ -81,6 +83,7 @@ LOG_MAX_BYTES=5242880
 LOG_BACKUP_COUNT=3
 ANNOUNCE_TTL_SECONDS=300
 POLL_RECONCILE_DELAY_SECONDS=0.5
+HEALTHCHECK_INTERVAL_SECONDS=60
 ```
 
 Логи пишутся в `bot.log` с ротацией: по умолчанию 5 МБ на файл и 3 архивные копии.
@@ -195,70 +198,7 @@ make setup
 - новые/рискованные фичи сначала stage, потом прод;
 - прод не останавливаем для обычной разработки.
 
-## Развёртывание на VPS (Ubuntu 24.04)
+## Развёртывание и эксплуатация
 
-### 1. Установить Python и venv
-```bash
-apt-get update
-apt-get install -y python3 python3-venv
-mkdir -p /opt/bot_tg
-python3 -m venv /opt/bot_tg/venv
-```
-
-### 2. Установить зависимости
-```bash
-/opt/bot_tg/venv/bin/pip install -r /opt/bot_tg/requirements.txt
-```
-
-### 3. Разместить файлы
-```bash
-mkdir -p /opt/bot_tg
-# скопировать bot.py и .env в /opt/bot_tg/
-```
-
-### 4. Создать systemd сервис
-```bash
-cat > /etc/systemd/system/tg-poll-bot.service << 'EOF'
-[Unit]
-Description=Telegram Poll Bot
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/bot_tg
-ExecStart=/opt/bot_tg/venv/bin/python /opt/bot_tg/bot.py
-Restart=always
-RestartSec=10
-EnvironmentFile=/opt/bot_tg/.env
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-### 5. Запустить сервис
-```bash
-systemctl daemon-reload
-systemctl enable tg-poll-bot
-systemctl start tg-poll-bot
-systemctl status tg-poll-bot
-```
-
-### Полезные команды
-
-```bash
-# статус
-systemctl status tg-poll-bot
-
-# логи в реальном времени
-journalctl -u tg-poll-bot -f
-
-# перезапуск после изменений
-systemctl restart tg-poll-bot
-
-# остановить
-systemctl stop tg-poll-bot
-
-# отключить автозапуск
-systemctl disable tg-poll-bot
-```
+- Первичная production-установка и атомарные релизы: [deploy/README.md](deploy/README.md).
+- Проверка, восстановление состояния и диагностика: [OPERATIONS.md](OPERATIONS.md).

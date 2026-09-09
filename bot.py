@@ -24,11 +24,9 @@ from announcements import AnnouncementManager
 from config import load_settings
 from health import HealthReporter
 from poll_service import evaluate_threshold_transition
+from schedule_commands import ScheduleAdminCommands
 from scheduling import (
     DEFAULT_SCHEDULE,
-    SETDAYS_KEYS,
-    SETTIME_KEYS,
-    VALID_DAYS,
     matches_schedule_day,
     register_jobs,
     schedule_datetime,
@@ -749,112 +747,6 @@ async def post_init(application: Application):
     logger.info("Планировщик запущен.")
 
 
-def _schedule_text() -> str:
-    cfg = schedule_config
-    return (
-        "📅 *Текущее расписание:*\n"
-        f"  `poll`        — опрос           {cfg['poll_days']}  {cfg['poll_hour']:02d}:{cfg['poll_minute']:02d}\n"
-        f"  `deadline`    — дедлайн         {cfg['deadline_days']}  {cfg['deadline_hour']:02d}:{cfg['deadline_minute']:02d}\n"
-        f"  `close`       — закрытие        {cfg['close_days']}  {cfg['close_hour']:02d}:{cfg['close_minute']:02d}\n"
-        f"  `remind_wed`  — напомин. ср     {cfg['remind_wed_days']}  {cfg['remind_wed_hour']:02d}:{cfg['remind_wed_minute']:02d}\n"
-        f"  `remind_sun`  — напомин. вс     {cfg['remind_sun_days']}  {cfg['remind_sun_hour']:02d}:{cfg['remind_sun_minute']:02d}\n\n"
-        "Время: `/settime poll 08:30`\n"
-        "Дни: `/setdays poll mon,wed,fri`"
-    )
-
-
-async def cmd_settime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Изменяет время расписания прямо из бота. /settime [ключ] [ЧЧ:ММ]"""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    args = context.args
-    if not args or len(args) < 2:
-        await update.message.reply_text(_schedule_text(), parse_mode="Markdown")
-        return
-
-    key = args[0].lower()
-    if key not in SETTIME_KEYS:
-        valid = ", ".join(f"`{k}`" for k in SETTIME_KEYS)
-        await update.message.reply_text(
-            f"Неизвестный ключ. Доступные: {valid}", parse_mode="Markdown"
-        )
-        return
-
-    try:
-        h_str, m_str = args[1].split(":")
-        hour, minute = int(h_str), int(m_str)
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            raise ValueError
-    except (ValueError, AttributeError):
-        await update.message.reply_text(
-            "Неверный формат. Пример: `/settime poll 08:30`", parse_mode="Markdown"
-        )
-        return
-
-    hour_key, minute_key, label = SETTIME_KEYS[key]
-    old_h = schedule_config[hour_key]
-    old_m = schedule_config[minute_key]
-    schedule_config[hour_key] = hour
-    schedule_config[minute_key] = minute
-    save_state()
-
-    scheduler = context.application.bot_data.get("scheduler")
-    if scheduler and scheduler.running:
-        reschedule_jobs(scheduler, context.bot)
-
-    await update.message.reply_text(
-        f"✅ *{label}*: `{old_h:02d}:{old_m:02d}` → `{hour:02d}:{minute:02d}`\n\n"
-        + _schedule_text(),
-        parse_mode="Markdown",
-    )
-
-
-async def cmd_setdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Изменяет дни недели расписания. /setdays [ключ] [mon,tue,...]"""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    args = context.args
-    if not args or len(args) < 2:
-        await update.message.reply_text(_schedule_text(), parse_mode="Markdown")
-        return
-
-    key = args[0].lower()
-    if key not in SETDAYS_KEYS:
-        valid = ", ".join(f"`{k}`" for k in SETDAYS_KEYS)
-        await update.message.reply_text(
-            f"Неизвестный ключ. Доступные: {valid}", parse_mode="Markdown"
-        )
-        return
-
-    raw = args[1].lower()
-    parts = [d.strip() for d in raw.split(",") if d.strip()]
-    invalid = [d for d in parts if d not in VALID_DAYS]
-    if not parts or invalid:
-        await update.message.reply_text(
-            f"Неверные дни: `{','.join(invalid) if invalid else '(пусто)'}`.\n"
-            "Допустимые: `mon tue wed thu fri sat sun`",
-            parse_mode="Markdown",
-        )
-        return
-
-    cfg_key = SETDAYS_KEYS[key]
-    old_days = schedule_config[cfg_key]
-    new_days = ",".join(parts)
-    schedule_config[cfg_key] = new_days
-    save_state()
-
-    scheduler = context.application.bot_data.get("scheduler")
-    if scheduler and scheduler.running:
-        reschedule_jobs(scheduler, context.bot)
-
-    await update.message.reply_text(
-        f"✅ *{key}* дни: `{old_days}` → `{new_days}`\n\n" + _schedule_text(),
-        parse_mode="Markdown",
-    )
-
-
 async def post_shutdown(application: Application):
     scheduler = application.bot_data.get("scheduler")
     if scheduler and scheduler.running:
@@ -877,6 +769,12 @@ def main():
         builder = builder.proxy(settings.proxy_url).get_updates_proxy(settings.proxy_url)
         logger.info("Используется прокси")
     app = builder.build()
+    schedule_commands = ScheduleAdminCommands(
+        admin_ids=ADMIN_IDS,
+        schedule_config=schedule_config,
+        save_state=save_state,
+        reschedule_jobs=reschedule_jobs,
+    )
     app.add_handler(PollHandler(handle_poll_update))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
     app.add_handler(CommandHandler("start", cmd_start))
@@ -886,8 +784,8 @@ def main():
     app.add_handler(CommandHandler("cancel", announcement_manager.cancel))
     app.add_handler(CommandHandler("plus1", cmd_plus1))
     app.add_handler(CommandHandler("minus1", cmd_minus1))
-    app.add_handler(CommandHandler("settime", cmd_settime))
-    app.add_handler(CommandHandler("setdays", cmd_setdays))
+    app.add_handler(CommandHandler("settime", schedule_commands.settime))
+    app.add_handler(CommandHandler("setdays", schedule_commands.setdays))
     app.add_handler(
         CallbackQueryHandler(announcement_manager.handle_callback, pattern=r"^announce:")
     )

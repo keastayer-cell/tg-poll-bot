@@ -23,6 +23,14 @@ from telegram.ext import (
 from announcements import AnnouncementManager
 from config import load_settings
 from health import HealthReporter
+from messages import (
+    admin_poll_started,
+    compact_status,
+    deadline_warning,
+    detailed_status,
+    game_reminder,
+    poll_instruction,
+)
 from poll_service import evaluate_threshold_transition
 from schedule_commands import ScheduleAdminCommands
 from scheduling import (
@@ -36,7 +44,6 @@ from votes import (
     add_manual_yes_vote,
     current_telegram_yes_count,
     current_yes_count,
-    manual_vote_labels,
     normalize_manual_vote,
     remove_manual_yes_vote,
 )
@@ -263,13 +270,7 @@ async def send_poll(bot, poll_date: Optional[str] = None):
     try:
         await bot.send_message(
             chat_id=CHAT_ID,
-            text=(
-                "Я создал опрос — проголосуйте.\n\n"
-                "Если хотите пригласить человека на игру, напишите в чат:\n"
-                "<b>+1 ФИО</b>\n\n"
-                "Например: <b>+1 Иванов Иван</b>\n\n"
-                "Обязательно укажите имя приглашённого, чтобы всем было понятно, кого добавили."
-            ),
+            text=poll_instruction(),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -281,11 +282,7 @@ async def send_poll(bot, poll_date: Optional[str] = None):
         try:
             await bot.send_message(
                 chat_id=admin_id,
-                text=(
-                    f'📋 Я запустил опрос "{date_str}".\n'
-                    f"ID опроса: {poll_id}\n\n"
-                    f"Я буду сообщать Вам о его результатах."
-                ),
+                text=admin_poll_started(date_str, poll_id),
             )
         except Exception as e:
             logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
@@ -331,7 +328,7 @@ async def check_deadline(bot):
             try:
                 await bot.send_message(
                     chat_id=admin_id,
-                    text=(f"⚠️ 15:00 — в опросе только {yes_count} «ДА» из {YES_THRESHOLD} нужных."),
+                    text=deadline_warning(yes_count, YES_THRESHOLD),
                 )
             except Exception as e:
                 logger.warning("Не удалось уведомить админа %s: %s", admin_id, e)
@@ -352,7 +349,7 @@ async def remind_game(bot, reminder_key: str):
     try:
         await bot.send_message(
             chat_id=CHAT_ID,
-            text="Мужчины, напоминаю что сегодня вы играете. Всем приятной игры и без травм 🏃",
+            text=game_reminder(),
         )
         sent_reminders.append(reminder_key)
         save_state()
@@ -493,46 +490,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_poll_id is None or current_poll_id not in polls:
         await update.message.reply_text("Нет активного опроса.")
         return
-    state = polls[current_poll_id]
-    yes_count = current_yes_count(state)
-    telegram_yes_count = current_telegram_yes_count(state)
-    manual_names = manual_vote_labels(state)
-    manual_yes_count = len(manual_names)
-    no_count = int(state.get("no_count", 0))
-    real_names = list(state["yes_voters"].values())
-    sections = []
-    if real_names:
-        sections.append(
-            "Реальные «ДА»:\n" + "\n".join(f"{i + 1}. {n}" for i, n in enumerate(real_names))
-        )
-    if manual_names:
-        sections.append(
-            "Виртуальные "
-            + "+1"
-            + ":\n"
-            + "\n".join(f"{i + 1}. {n}" for i, n in enumerate(manual_names))
-        )
-    names_text = "\n\n".join(sections) if sections else "—"
-    tracked_hint = ""
-    if len(real_names) != telegram_yes_count:
-        tracked_hint = (
-            "\n\nСписок реальных имен может быть неполным: счёт берётся из самого опроса Telegram."
-        )
-    await update.message.reply_text(
-        f"«ДА»: {telegram_yes_count} + {manual_yes_count} вручную = {yes_count} / {YES_THRESHOLD}\n"
-        f"«Нет»: {no_count}\n\n{names_text}{tracked_hint}"
-    )
-
-
-def compact_status_text(state: dict) -> str:
-    yes_count = current_yes_count(state)
-    telegram_yes_count = current_telegram_yes_count(state)
-    manual_yes_count = len(state.get("manual_yes_voters", {}))
-    no_count = int(state.get("no_count", 0))
-    return (
-        f"«ДА»: {telegram_yes_count} + {manual_yes_count} вручную = {yes_count} / {YES_THRESHOLD}\n"
-        f"«Нет»: {no_count}"
-    )
+    await update.message.reply_text(detailed_status(polls[current_poll_id], YES_THRESHOLD))
 
 
 async def add_manual_yes_from_text(
@@ -564,7 +522,7 @@ async def add_manual_yes_from_text(
         reply_lines.append(confirmation_text)
     else:
         reply_lines.append(f"Добавил виртуальный +1: {label}")
-    reply_lines.append(compact_status_text(state))
+    reply_lines.append(compact_status(state, YES_THRESHOLD))
     await update.message.reply_text("\n".join(reply_lines))
 
 

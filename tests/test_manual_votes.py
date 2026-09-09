@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import bot
+from votes import manual_vote_labels
 
 from .fakes import FakeBot, make_update
 
@@ -37,7 +38,7 @@ def test_plain_plus_one_uses_guest_from_sender_label(monkeypatch):
 
     asyncio.run(bot.handle_admin_plain_text(update, context))
 
-    assert bot.manual_vote_labels(state) == ["Гость от Stayer"]
+    assert manual_vote_labels(state) == ["Гость от Stayer"]
     vote = next(iter(state["manual_yes_voters"].values()))
     assert vote["added_by_user_id"] == 42
     assert vote["added_by_name"] == "Stayer"
@@ -51,7 +52,7 @@ def test_named_plus_one_remembers_entered_name(monkeypatch):
 
     asyncio.run(bot.handle_admin_plain_text(update, context))
 
-    assert bot.manual_vote_labels(state) == ["Иванов Иван"]
+    assert manual_vote_labels(state) == ["Иванов Иван"]
     assert "Иванов Иван" in update.message.replies[0]["text"]
 
 
@@ -83,4 +84,4 @@ def test_specific_manual_vote_can_be_removed():
     removed = bot.remove_manual_yes_vote(state, "Иванов Иван")
 
     assert removed["label"] == "Иванов Иван"
-    assert bot.manual_vote_labels(state) == ["Петров Петр"]
+    assert manual_vote_labels(state) == ["Петров Петр"]

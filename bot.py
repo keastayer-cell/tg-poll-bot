@@ -94,7 +94,7 @@ polls: dict = {}
 
 # poll_id последнего созданного опроса (для дедлайна 15:00)
 current_poll_id: Optional[str] = None
-PLUS_ONE_PATTERN = re.compile(r"^\+1$")
+PLUS_ONE_PATTERN = re.compile(r"^\+1(?:\s+(.+))?$")
 pending_announcements: dict[int, bool] = {}
 
 
@@ -272,9 +272,13 @@ async def send_poll(bot):
         await bot.send_message(
             chat_id=CHAT_ID,
             text=(
-                "Я создал опрос, проголосуйте. Если вы хотите пригласить человека на игру, "
-                "просто в чате напишите +1 и я зачту этот +1 от вас в общий учет голосов."
+                "Я создал опрос — проголосуйте.\n\n"
+                "Если хотите пригласить человека на игру, напишите в чат:\n"
+                "<b>+1 ФИО</b>\n\n"
+                "Например: <b>+1 Иванов Иван</b>\n\n"
+                "Обязательно укажите имя приглашённого, чтобы всем было понятно, кого добавили."
             ),
+            parse_mode="HTML",
         )
     except Exception as e:
         logger.warning("Не удалось отправить сообщение-инструкцию после создания опроса: %s", e)
@@ -614,11 +618,18 @@ async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_
     plus_match = PLUS_ONE_PATTERN.fullmatch(text)
     if plus_match:
         author_name = display_name(user)
+        guest_name = plus_match.group(1)
+        label = " ".join(guest_name.split()) if guest_name else f"Гость от {author_name}"
+        confirmation_text = (
+            f"Виртуальный +1 для {label} засчитан."
+            if guest_name
+            else f"Виртуальный +1 «{label}» засчитан."
+        )
         await add_manual_yes_from_text(
             update,
-            author_name,
+            label,
             context,
-            confirmation_text=f"+1 от {author_name}, засчитан в учет.",
+            confirmation_text=confirmation_text,
         )
         return
 

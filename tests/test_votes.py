@@ -1,6 +1,11 @@
 from datetime import datetime, timezone
 
-from votes import add_manual_yes_vote, manual_vote_labels, remove_manual_yes_vote
+from votes import (
+    add_manual_yes_vote,
+    manual_vote_labels,
+    parse_plus_one,
+    remove_manual_yes_vote,
+)
 
 
 def test_manual_vote_contains_audit_fields():
@@ -34,3 +39,15 @@ def test_remove_by_name_is_case_insensitive():
 
     assert removed["label"] == "Иванов Иван"
     assert manual_vote_labels(state) == ["Петров Петр"]
+
+
+def test_named_plus_one_is_normalized():
+    assert parse_plus_one("+1   Иванов   Иван", "Stayer") == "Иванов Иван"
+
+
+def test_bare_plus_one_uses_sender_name():
+    assert parse_plus_one("+1", "Stayer") == "Гость от Stayer"
+
+
+def test_plus_one_inside_sentence_is_ignored():
+    assert parse_plus_one("Со мной будет +1 Иванов", "Stayer") is None

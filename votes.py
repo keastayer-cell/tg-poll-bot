@@ -1,8 +1,31 @@
+import re
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from models import ManualVote
+
+PLUS_ONE_PATTERN = re.compile(r"^\+1(?:\s+(.+))?$")
+
+
+def display_user_name(user) -> str:
+    full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
+    full_name = full_name.strip()
+    if full_name:
+        return full_name
+    if getattr(user, "username", None):
+        return f"@{user.username}"
+    return f"id{user.id}"
+
+
+def parse_plus_one(text: str, author_name: str) -> Optional[str]:
+    match = PLUS_ONE_PATTERN.fullmatch(text.strip())
+    if match is None:
+        return None
+    guest_name = match.group(1)
+    if guest_name:
+        return " ".join(guest_name.split())
+    return f"Гость от {author_name}"
 
 
 def current_yes_count(state: dict) -> int:

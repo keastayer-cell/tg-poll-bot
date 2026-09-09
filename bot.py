@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -44,7 +43,9 @@ from votes import (
     add_manual_yes_vote,
     current_telegram_yes_count,
     current_yes_count,
+    display_user_name,
     normalize_manual_vote,
+    parse_plus_one,
     remove_manual_yes_vote,
 )
 
@@ -104,7 +105,6 @@ polls: dict = {}
 # poll_id последнего созданного опроса (для дедлайна 15:00)
 current_poll_id: Optional[str] = None
 last_poll_message_id: Optional[int] = None
-PLUS_ONE_PATTERN = re.compile(r"^\+1(?:\s+(.+))?$")
 announcement_manager = AnnouncementManager(
     admin_ids=ADMIN_IDS,
     target_chat_id=CHAT_ID,
@@ -191,16 +191,6 @@ def new_poll_state(poll_date: Optional[str] = None) -> dict:
         "sent_reminders": [],
         "poll_date": poll_date or current_poll_date(),
     }
-
-
-def display_name(user) -> str:
-    full_name = (user.first_name or "") + (" " + user.last_name if user.last_name else "")
-    full_name = full_name.strip()
-    if full_name:
-        return full_name
-    if getattr(user, "username", None):
-        return f"@{user.username}"
-    return f"id{user.id}"
 
 
 async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> None:
@@ -510,7 +500,7 @@ async def add_manual_yes_from_text(
         state,
         label,
         added_by_user_id=user.id if user else None,
-        added_by_name=display_name(user) if user else None,
+        added_by_name=display_user_name(user) if user else None,
         source=source,
         timezone=TIMEZONE,
     )
@@ -593,14 +583,12 @@ async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_
     if chat.id != CHAT_ID:
         return
 
-    plus_match = PLUS_ONE_PATTERN.fullmatch(text)
-    if plus_match:
-        author_name = display_name(user)
-        guest_name = plus_match.group(1)
-        label = " ".join(guest_name.split()) if guest_name else f"Гость от {author_name}"
+    label = parse_plus_one(text, display_user_name(user))
+    if label is not None:
+        has_guest_name = text.strip() != "+1"
         confirmation_text = (
             f"Виртуальный +1 для {label} засчитан."
-            if guest_name
+            if has_guest_name
             else f"Виртуальный +1 «{label}» засчитан."
         )
         await add_manual_yes_from_text(

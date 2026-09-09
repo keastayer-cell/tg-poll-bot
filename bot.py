@@ -203,15 +203,24 @@ async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> 
     yes_count = current_yes_count(state)
     state_changed = False
 
-    if previous_yes_count == YES_THRESHOLD and yes_count == YES_THRESHOLD - 1:
-        state["notified_yes"] = False
-        state["notified_almost"] = True
-        state_changed = True
+    if yes_count < previous_yes_count and state.get("notified_yes", False):
         removed_label = state.get("last_removed_yes_label") or "Кто-то"
-        await bot.send_message(
-            chat_id=CHAT_ID,
-            text=f"{removed_label} слился. Нас снова не хватает.",
-        )
+        if yes_count < YES_THRESHOLD:
+            state["notified_yes"] = False
+            state["notified_almost"] = True
+            state_changed = True
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=(
+                    f"{removed_label} слился. Нас снова не хватает: "
+                    f"{yes_count} из {YES_THRESHOLD}."
+                ),
+            )
+        else:
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"{removed_label} слился. Осталось {yes_count} «ДА», нас пока хватает.",
+            )
 
     if yes_count >= YES_THRESHOLD - 1 and not state["notified_almost"] and not state["notified_yes"]:
         state["notified_almost"] = True

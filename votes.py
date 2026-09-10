@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from models import ManualVote
+from models import ManualVote, normalize_manual_vote
 
 PLUS_ONE_PATTERN = re.compile(r"^\+1(?:\s+(.+))?$")
 
@@ -36,24 +36,6 @@ def current_yes_count(state: dict) -> int:
 
 def current_telegram_yes_count(state: dict) -> int:
     return int(state.get("yes_count", len(state.get("yes_voters", {}))))
-
-
-def normalize_manual_vote(value) -> ManualVote:
-    if isinstance(value, dict):
-        return {
-            "label": str(value.get("label", "Гость")),
-            "added_by_user_id": value.get("added_by_user_id"),
-            "added_by_name": value.get("added_by_name"),
-            "added_at": value.get("added_at"),
-            "source": value.get("source", "unknown"),
-        }
-    return {
-        "label": str(value),
-        "added_by_user_id": None,
-        "added_by_name": None,
-        "added_at": None,
-        "source": "legacy",
-    }
 
 
 def manual_vote_label(value) -> str:

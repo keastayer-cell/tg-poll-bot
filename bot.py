@@ -30,6 +30,8 @@ from messages import (
     game_reminder,
     poll_instruction,
 )
+from models import BotSnapshot, snapshot_from_json
+from models import new_poll_state as build_poll_state
 from poll_service import evaluate_threshold_transition
 from schedule_commands import ScheduleAdminCommands
 from scheduling import (
@@ -44,7 +46,6 @@ from votes import (
     current_telegram_yes_count,
     current_yes_count,
     display_user_name,
-    normalize_manual_vote,
     parse_plus_one,
     remove_manual_yes_vote,
 )
@@ -118,15 +119,13 @@ def current_poll_date() -> str:
 
 
 def save_state():
-    state_repository.save(
-        {
-            "schema_version": STATE_SCHEMA_VERSION,
-            "polls": polls,
-            "current_poll_id": current_poll_id,
-            "last_poll_message_id": last_poll_message_id,
-            "schedule_config": schedule_config,
-        }
+    snapshot = BotSnapshot(
+        polls=polls,
+        current_poll_id=current_poll_id,
+        last_poll_message_id=last_poll_message_id,
+        schedule_config=schedule_config,
     )
+    state_repository.save(snapshot.to_json(STATE_SCHEMA_VERSION))
 
 
 def load_state():
@@ -137,39 +136,18 @@ def load_state():
     if state_repository.recovered_from_backup:
         logger.warning("Основной state.json повреждён, состояние восстановлено из резервной копии")
 
-    schema_version = int(data.get("schema_version", 0))
-    if schema_version > STATE_SCHEMA_VERSION:
-        raise StateLoadError(
-            f"Версия state.json {schema_version} новее поддерживаемой {STATE_SCHEMA_VERSION}"
+    try:
+        snapshot = snapshot_from_json(
+            data,
+            default_schedule=DEFAULT_SCHEDULE,
+            supported_schema_version=STATE_SCHEMA_VERSION,
         )
-    if not isinstance(data.get("polls", {}), dict):
-        raise StateLoadError("Поле polls в state.json должно быть объектом")
-    if not isinstance(data.get("schedule_config", {}), dict):
-        raise StateLoadError("Поле schedule_config в state.json должно быть объектом")
-
-    polls = data.get("polls", {})
-    current_poll_id = data.get("current_poll_id")
-    last_poll_message_id = data.get("last_poll_message_id")
-    if last_poll_message_id is None and current_poll_id in polls:
-        last_poll_message_id = polls[current_poll_id].get("message_id")
-    # yes_voters хранятся с int-ключами, JSON сохраняет их как строки.
-    for state in polls.values():
-        state["yes_voters"] = {int(k): v for k, v in state.get("yes_voters", {}).items()}
-        state.setdefault("manual_yes_voters", {})
-        state["manual_yes_voters"] = {
-            key: normalize_manual_vote(value) for key, value in state["manual_yes_voters"].items()
-        }
-        state["manual_yes_seq"] = int(state.get("manual_yes_seq", len(state["manual_yes_voters"])))
-        state["yes_count"] = int(state.get("yes_count", len(state["yes_voters"])))
-        state["no_count"] = int(state.get("no_count", 0))
-        state["last_total_yes_count"] = int(
-            state.get("last_total_yes_count", state["yes_count"] + len(state["manual_yes_voters"]))
-        )
-        state.setdefault("last_removed_yes_label", None)
-        state.setdefault("sent_reminders", [])
-    # Загружаем сохранённое расписание, добавляя дефолты для новых ключей
-    saved_cfg = data.get("schedule_config", {})
-    schedule_config = {**DEFAULT_SCHEDULE, **saved_cfg}
+    except (TypeError, ValueError) as error:
+        raise StateLoadError(str(error)) from error
+    polls = snapshot.polls
+    current_poll_id = snapshot.current_poll_id
+    last_poll_message_id = snapshot.last_poll_message_id
+    schedule_config = snapshot.schedule_config
     logger.info(
         "Состояние восстановлено: current_poll_id=%s, опросов=%d", current_poll_id, len(polls)
     )
@@ -177,20 +155,7 @@ def load_state():
 
 
 def new_poll_state(poll_date: Optional[str] = None) -> dict:
-    return {
-        "yes_voters": {},  # текущие "ДА": {user_id: "Имя Фамилия"}
-        "manual_yes_voters": {},  # виртуальные +1: {manual_key: "Имя"}
-        "manual_yes_seq": 0,
-        "yes_count": 0,
-        "no_count": 0,
-        "last_total_yes_count": 0,
-        "last_removed_yes_label": None,
-        "notified_almost": False,
-        "notified_yes": False,
-        "notified_deadline": False,
-        "sent_reminders": [],
-        "poll_date": poll_date or current_poll_date(),
-    }
+    return build_poll_state(poll_date or current_poll_date())
 
 
 async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> None:

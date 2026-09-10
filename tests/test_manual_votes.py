@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import bot
+from models import normalize_manual_vote
 from votes import manual_vote_labels
 
 from .fakes import FakeBot, make_update
@@ -67,7 +68,7 @@ def test_unrelated_text_is_ignored(monkeypatch):
 
 
 def test_legacy_manual_vote_is_normalized():
-    assert bot.normalize_manual_vote("Старый гость") == {
+    assert normalize_manual_vote("Старый гость") == {
         "label": "Старый гость",
         "added_by_user_id": None,
         "added_by_name": None,

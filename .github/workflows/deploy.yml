@@ -54,7 +54,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: "announcements.py,bot.py,config.py,health.py,messages.py,models.py,poll_service.py,schedule_commands.py,scheduling.py,storage.py,votes.py,handlers,deploy/check_bot_health.py,requirements.txt"
+          source: "announcements.py,bot.py,bot_service.py,main.py,config.py,health.py,messages.py,models.py,poll_service.py,schedule_commands.py,scheduling.py,storage.py,votes.py,handlers,deploy/check_bot_health.py,requirements.txt"
           target: /opt/bot_tg
 
       - name: Restart bot on VPS

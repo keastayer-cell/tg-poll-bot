@@ -55,6 +55,7 @@ class Settings:
     announce_ttl_seconds: int
     poll_reconcile_delay_seconds: float
     healthcheck_interval_seconds: int
+    health_failure_threshold: int
     env_path: Path
     data_dir: Path
     proxy_url: Optional[str]
@@ -112,6 +113,7 @@ def load_settings(base_dir: str, environ: Optional[Mapping[str, str]] = None) ->
         announce_ttl_seconds=_positive_int(env, "ANNOUNCE_TTL_SECONDS", 300),
         poll_reconcile_delay_seconds=_non_negative_float(env, "POLL_RECONCILE_DELAY_SECONDS", 0.5),
         healthcheck_interval_seconds=_positive_int(env, "HEALTHCHECK_INTERVAL_SECONDS", 60),
+        health_failure_threshold=_positive_int(env, "HEALTH_FAILURE_THRESHOLD", 3),
         env_path=env_path,
         data_dir=data_dir,
         proxy_url=env.get("HTTPS_PROXY") or env.get("https_proxy"),

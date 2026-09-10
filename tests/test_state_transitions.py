@@ -1,6 +1,8 @@
 import asyncio
 
-import bot
+from telegram.error import TelegramError
+
+import bot_service as bot
 
 
 class DeadlineBot:
@@ -13,7 +15,7 @@ class DeadlineBot:
 
 class ClosingBot:
     async def stop_poll(self, **kwargs):
-        raise RuntimeError("Telegram unavailable")
+        raise TelegramError("Telegram unavailable")
 
 
 def base_state():

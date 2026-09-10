@@ -96,6 +96,7 @@ class SchedulerManager:
         close_poll,
         remind_game,
         health_reporter,
+        admin_ids: list[int],
         instance_name: str,
         logger,
     ):
@@ -110,6 +111,7 @@ class SchedulerManager:
         self.close_poll = close_poll
         self.remind_game = remind_game
         self.health_reporter = health_reporter
+        self.admin_ids = admin_ids
         self.instance_name = instance_name
         self.logger = logger
 
@@ -180,6 +182,21 @@ class SchedulerManager:
         )
         if not healthy:
             self.logger.warning("Health-check Telegram API завершился ошибкой")
+            if self.health_reporter.alert_failure:
+                for admin_id in self.admin_ids:
+                    await application.bot.send_message(
+                        chat_id=admin_id,
+                        text=(
+                            "⚠️ Бот несколько раз подряд не смог обратиться к Telegram API. "
+                            "Проверьте сервис и сеть."
+                        ),
+                    )
+        elif self.health_reporter.alert_recovery:
+            for admin_id in self.admin_ids:
+                await application.bot.send_message(
+                    chat_id=admin_id,
+                    text="✅ Связь бота с Telegram API восстановлена.",
+                )
 
     async def start(self, application) -> None:
         if not self.enabled:

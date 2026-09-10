@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from telegram.error import TelegramError
+
 from health import HealthReporter
 
 
@@ -12,7 +14,7 @@ class HealthyBot:
 
 class BrokenBot:
     async def get_me(self):
-        raise ConnectionError("offline")
+        raise TelegramError("offline")
 
 
 def test_successful_probe_records_last_success(tmp_path):
@@ -64,4 +66,29 @@ def test_failed_probe_preserves_previous_success_time(tmp_path):
     assert healthy is False
     assert report["status"] == "error"
     assert report["last_success_at"] == "2026-09-10T12:00:00+00:00"
-    assert report["error_type"] == "ConnectionError"
+    assert report["error_type"] == "TelegramError"
+
+
+def test_alerts_only_after_repeated_failures_and_then_on_recovery(tmp_path):
+    reporter = HealthReporter(str(tmp_path / "health.json"), failure_threshold=2)
+
+    asyncio.run(
+        reporter.probe(
+            BrokenBot(), instance_name="test", scheduler_running=True, active_poll_id=None
+        )
+    )
+    assert reporter.alert_failure is False
+
+    asyncio.run(
+        reporter.probe(
+            BrokenBot(), instance_name="test", scheduler_running=True, active_poll_id=None
+        )
+    )
+    assert reporter.alert_failure is True
+
+    asyncio.run(
+        reporter.probe(
+            HealthyBot(), instance_name="test", scheduler_running=True, active_poll_id=None
+        )
+    )
+    assert reporter.alert_recovery is True

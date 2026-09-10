@@ -48,7 +48,9 @@
 
 ```
 tg-poll-bot/
-├── bot.py          # основной код бота
+├── main.py         # минимальная точка запуска
+├── bot_service.py  # сборка сервисов и прикладные операции
+├── bot.py          # совместимый старый entry point
 ├── .env            # prod-конфигурация
 ├── .env.example    # пример конфигурации
 ├── .env.stage      # stage-конфигурация
@@ -84,6 +86,7 @@ LOG_BACKUP_COUNT=3
 ANNOUNCE_TTL_SECONDS=300
 POLL_RECONCILE_DELAY_SECONDS=0.5
 HEALTHCHECK_INTERVAL_SECONDS=60
+HEALTH_FAILURE_THRESHOLD=3
 ```
 
 Логи пишутся в `bot.log` с ротацией: по умолчанию 5 МБ на файл и 3 архивные копии.
@@ -170,7 +173,7 @@ make setup
 ```
 
 > `run_stage.sh` не запустит второй локальный экземпляр, если первый ещё работает.
-> Не запускать `venv/bin/python bot.py` напрямую — если процесс уже висит, будет конфликт polling (409).
+> Не запускать `venv/bin/python main.py` напрямую — если процесс уже висит, будет конфликт polling (409).
 
 Что важно:
 - `ENABLE_SCHEDULER=0` в stage отключает cron-задачи, чтобы тестировать руками через `/poll`.

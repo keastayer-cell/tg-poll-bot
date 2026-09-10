@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime
 
-import bot
+import bot_service as bot
 from scheduling import SchedulerManager
 
 from .fakes import FakeBot
@@ -46,6 +46,7 @@ def scheduler_manager():
         close_poll=bot.close_poll,
         remind_game=bot.remind_game,
         health_reporter=bot.health_reporter,
+        admin_ids=[],
         instance_name="pytest",
         logger=bot.logger,
     )

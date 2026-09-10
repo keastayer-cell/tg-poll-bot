@@ -27,4 +27,4 @@ fi
 
 echo "$$" > "$PID_FILE"
 cd "$PROJECT_DIR"
-exec env ENV_FILE=.env.stage "$PYTHON_BIN" bot.py
+exec env ENV_FILE=.env.stage "$PYTHON_BIN" main.py

@@ -10,7 +10,7 @@ Group=tg-poll-bot
 WorkingDirectory=/opt/bot_tg/current
 EnvironmentFile=/opt/bot_tg/shared/.env
 Environment=DATA_DIR=/opt/bot_tg/shared
-ExecStart=/opt/bot_tg/current/venv/bin/python /opt/bot_tg/current/bot.py
+ExecStart=/opt/bot_tg/current/venv/bin/python /opt/bot_tg/current/main.py
 Restart=always
 RestartSec=5
 StandardOutput=journal

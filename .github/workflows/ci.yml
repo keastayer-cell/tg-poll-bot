@@ -30,13 +30,13 @@ jobs:
           python -m pip check
 
       - name: Lint
-        run: ruff check *.py deploy tests
+        run: ruff check *.py deploy handlers tests
 
       - name: Check formatting
-        run: ruff format --check *.py deploy tests
+        run: ruff format --check *.py deploy handlers tests
 
       - name: Run tests
         run: pytest
 
       - name: Compile application
-        run: python -m py_compile *.py deploy/*.py
+        run: python -m py_compile *.py deploy/*.py handlers/*.py

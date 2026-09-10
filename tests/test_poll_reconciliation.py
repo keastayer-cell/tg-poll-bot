@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import bot
+from handlers.polls import PollHandlers
 
 from .fakes import FakeBot
 
@@ -57,7 +58,14 @@ def prepare(monkeypatch):
     monkeypatch.setattr(bot, "polls", {"poll": state})
     monkeypatch.setattr(bot, "save_state", lambda: None)
     monkeypatch.setattr(bot, "POLL_RECONCILE_DELAY_SECONDS", 0)
-    return state, fake_bot, application, context
+    handlers = PollHandlers(
+        polls=bot.polls,
+        save_state=bot.save_state,
+        notify_thresholds=bot.maybe_send_threshold_notifications,
+        reconcile_decrease=bot.reconcile_poll_decrease,
+        logger=bot.logger,
+    )
+    return state, fake_bot, application, context, handlers
 
 
 async def run_scheduled_tasks(application):
@@ -72,11 +80,11 @@ def assert_named_quorum_warning(fake_bot):
 
 
 def test_poll_then_poll_answer_keeps_departing_name(monkeypatch):
-    state, fake_bot, application, context = prepare(monkeypatch)
+    state, fake_bot, application, context, handlers = prepare(monkeypatch)
 
-    asyncio.run(bot.handle_poll_update(poll_update(9), context))
+    asyncio.run(handlers.update(poll_update(9), context))
     assert state["yes_voters"] == {42: "Иванов Иван"}
-    asyncio.run(bot.handle_poll_answer(poll_answer(), context))
+    asyncio.run(handlers.answer(poll_answer(), context))
     asyncio.run(run_scheduled_tasks(application))
 
     assert_named_quorum_warning(fake_bot)
@@ -84,10 +92,10 @@ def test_poll_then_poll_answer_keeps_departing_name(monkeypatch):
 
 
 def test_poll_answer_then_poll_keeps_departing_name(monkeypatch):
-    state, fake_bot, application, context = prepare(monkeypatch)
+    state, fake_bot, application, context, handlers = prepare(monkeypatch)
 
-    asyncio.run(bot.handle_poll_answer(poll_answer(), context))
-    asyncio.run(bot.handle_poll_update(poll_update(9), context))
+    asyncio.run(handlers.answer(poll_answer(), context))
+    asyncio.run(handlers.update(poll_update(9), context))
     asyncio.run(run_scheduled_tasks(application))
 
     assert_named_quorum_warning(fake_bot)

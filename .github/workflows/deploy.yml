@@ -43,10 +43,10 @@ jobs:
 
       - name: Verify release
         run: |
-          ruff check *.py deploy tests
-          ruff format --check *.py deploy tests
+          ruff check *.py deploy handlers tests
+          ruff format --check *.py deploy handlers tests
           pytest
-          python -m py_compile *.py deploy/*.py
+          python -m py_compile *.py deploy/*.py handlers/*.py
 
       - name: Upload bot files to VPS
         uses: appleboy/scp-action@v0.1.7
@@ -54,7 +54,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: "announcements.py,bot.py,config.py,health.py,messages.py,models.py,poll_service.py,schedule_commands.py,scheduling.py,storage.py,votes.py,deploy/check_bot_health.py,requirements.txt"
+          source: "announcements.py,bot.py,config.py,health.py,messages.py,models.py,poll_service.py,schedule_commands.py,scheduling.py,storage.py,votes.py,handlers,deploy/check_bot_health.py,requirements.txt"
           target: /opt/bot_tg
 
       - name: Restart bot on VPS

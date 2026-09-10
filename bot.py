@@ -21,15 +21,10 @@ from telegram.ext import (
 
 from announcements import AnnouncementManager
 from config import load_settings
+from handlers.polls import PollHandlers
+from handlers.votes import VoteHandlers
 from health import HealthReporter
-from messages import (
-    admin_poll_started,
-    compact_status,
-    deadline_warning,
-    detailed_status,
-    game_reminder,
-    poll_instruction,
-)
+from messages import admin_poll_started, deadline_warning, game_reminder, poll_instruction
 from models import BotSnapshot, snapshot_from_json
 from models import new_poll_state as build_poll_state
 from poll_service import evaluate_threshold_transition
@@ -41,14 +36,7 @@ from scheduling import (
     schedule_datetime,
 )
 from storage import JsonStateRepository, StateLoadError
-from votes import (
-    add_manual_yes_vote,
-    current_telegram_yes_count,
-    current_yes_count,
-    display_user_name,
-    parse_plus_one,
-    remove_manual_yes_vote,
-)
+from votes import current_telegram_yes_count, current_yes_count
 
 _BASE_DIR = str(Path(__file__).resolve().parent)
 settings = load_settings(_BASE_DIR)
@@ -340,87 +328,6 @@ async def close_poll(bot):
     return True
 
 
-async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    answer = update.poll_answer
-    poll_id = answer.poll_id
-    user_id = answer.user.id
-
-    logger.info(
-        "Ответ: poll_id=%s, user_id=%s, options=%s",
-        poll_id,
-        user_id,
-        answer.option_ids,
-    )
-
-    state = polls.get(poll_id)
-    if state is None:
-        logger.warning("poll_id=%s не найден, игнорирую", poll_id)
-        return
-
-    # option_ids[0] = "ДА", option_ids[1] = "Нет"
-    full_name = (answer.user.first_name or "") + (
-        " " + answer.user.last_name if answer.user.last_name else ""
-    )
-    full_name = full_name.strip() or f"id{user_id}"
-    if 0 in answer.option_ids:
-        state["yes_voters"][user_id] = full_name
-    else:
-        removed_name = state["yes_voters"].pop(user_id, None)
-        state["last_removed_yes_label"] = removed_name or full_name
-    save_state()
-
-    yes_count = current_yes_count(state)
-    logger.info(
-        "poll_id=%s, агрегированных «ДА»: %d, текущих отслеженных «ДА»: %d, tracked_voters=%s",
-        poll_id,
-        yes_count,
-        len(state["yes_voters"]),
-        list(state["yes_voters"].values()),
-    )
-
-
-async def handle_poll_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    poll = update.poll
-    state = polls.get(poll.id)
-    if state is None:
-        logger.warning("poll_id=%s не найден для poll update, игнорирую", poll.id)
-        return
-
-    yes_count = poll.options[0].voter_count if len(poll.options) > 0 else 0
-    no_count = poll.options[1].voter_count if len(poll.options) > 1 else 0
-    tracked_yes_count = len(state["yes_voters"])
-    previous_yes_count = current_telegram_yes_count(state)
-
-    state["yes_count"] = yes_count
-    state["no_count"] = no_count
-
-    # Poll и PollAnswer могут прийти в разном порядке. Не очищаем известные имена,
-    # пока отдельное PollAnswer-обновление может ещё находиться в очереди.
-    if tracked_yes_count > yes_count:
-        logger.warning(
-            "poll_id=%s: tracked yes_voters=%d больше агрегированного yes_count=%d, ожидаю PollAnswer",
-            poll.id,
-            tracked_yes_count,
-            yes_count,
-        )
-
-    save_state()
-    logger.info(
-        "poll_id=%s, poll update: yes=%d, no=%d, total=%d",
-        poll.id,
-        yes_count,
-        no_count,
-        poll.total_voter_count,
-    )
-    if yes_count < previous_yes_count:
-        context.application.create_task(
-            reconcile_poll_decrease(context.bot, poll.id, yes_count),
-            name=f"reconcile-poll-{poll.id}-{yes_count}",
-        )
-    else:
-        await maybe_send_threshold_notifications(context.bot, poll.id, state)
-
-
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Бля, ты чо меня будишь, а братик 😅\n"
@@ -438,134 +345,6 @@ async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Опрос запущен вручную.")
     else:
         await update.message.reply_text("Сегодняшний активный опрос уже существует.")
-
-
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Текущий счёт опроса командой /status (доступно всем)."""
-    if current_poll_id is None or current_poll_id not in polls:
-        await update.message.reply_text("Нет активного опроса.")
-        return
-    await update.message.reply_text(detailed_status(polls[current_poll_id], YES_THRESHOLD))
-
-
-async def add_manual_yes_from_text(
-    update: Update,
-    label: str,
-    context: ContextTypes.DEFAULT_TYPE,
-    confirmation_text: Optional[str] = None,
-    source: str = "plain_text",
-):
-    if current_poll_id is None or current_poll_id not in polls:
-        await update.message.reply_text("Нет активного опроса.")
-        return
-
-    state = polls[current_poll_id]
-    user = update.effective_user
-    add_manual_yes_vote(
-        state,
-        label,
-        added_by_user_id=user.id if user else None,
-        added_by_name=display_user_name(user) if user else None,
-        source=source,
-        timezone=TIMEZONE,
-    )
-    save_state()
-    await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
-
-    reply_lines = []
-    if confirmation_text:
-        reply_lines.append(confirmation_text)
-    else:
-        reply_lines.append(f"Добавил виртуальный +1: {label}")
-    reply_lines.append(compact_status(state, YES_THRESHOLD))
-    await update.message.reply_text("\n".join(reply_lines))
-
-
-async def remove_manual_yes_from_text(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    query: Optional[str] = None,
-):
-    if current_poll_id is None or current_poll_id not in polls:
-        await update.message.reply_text("Нет активного опроса.")
-        return
-
-    state = polls[current_poll_id]
-    removed_vote = remove_manual_yes_vote(state, query)
-    if removed_vote is None:
-        message = f"Виртуальный +1 «{query}» не найден." if query else "Виртуальных +1 сейчас нет."
-        await update.message.reply_text(message)
-        return
-    removed_label = removed_vote["label"]
-    state["last_removed_yes_label"] = removed_label
-
-    save_state()
-    total_yes = current_yes_count(state)
-    manual_yes_count = len(state.get("manual_yes_voters", {}))
-    await update.message.reply_text(
-        f"Убрал виртуальный +1: {removed_label}\n"
-        f"Теперь «ДА»: {total_yes} (из них вручную: {manual_yes_count})."
-    )
-    await maybe_send_threshold_notifications(context.bot, current_poll_id, state)
-
-
-async def cmd_plus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавляет виртуальный +1 к текущему опросу (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    if current_poll_id is None or current_poll_id not in polls:
-        await update.message.reply_text("Нет активного опроса.")
-        return
-    state = polls[current_poll_id]
-    label = (
-        " ".join(context.args).strip() or f"+1 от админа #{int(state.get('manual_yes_seq', 0)) + 1}"
-    )
-    await add_manual_yes_from_text(update, label, context, source="admin_command")
-
-
-async def cmd_minus1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Убирает последний виртуальный +1 из текущего опроса (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    query = " ".join(context.args).strip() or None
-    await remove_manual_yes_from_text(update, context, query)
-
-
-async def handle_admin_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    user = update.effective_user
-    chat = update.effective_chat
-    if message is None or user is None or chat is None:
-        return
-
-    text = (message.text or "").strip()
-    if not text or text.startswith("/"):
-        return
-
-    if await announcement_manager.handle_text(update, context):
-        return
-
-    if chat.id != CHAT_ID:
-        return
-
-    label = parse_plus_one(text, display_user_name(user))
-    if label is not None:
-        has_guest_name = text.strip() != "+1"
-        confirmation_text = (
-            f"Виртуальный +1 для {label} засчитан."
-            if has_guest_name
-            else f"Виртуальный +1 «{label}» засчитан."
-        )
-        await add_manual_yes_from_text(
-            update,
-            label,
-            context,
-            confirmation_text=confirmation_text,
-        )
-        return
-
-    if text == "-1" and user.id in ADMIN_IDS:
-        await remove_manual_yes_from_text(update, context)
 
 
 def reschedule_jobs(scheduler, bot):
@@ -680,27 +459,45 @@ def main():
         builder = builder.proxy(settings.proxy_url).get_updates_proxy(settings.proxy_url)
         logger.info("Используется прокси")
     app = builder.build()
+    poll_handlers = PollHandlers(
+        polls=polls,
+        save_state=save_state,
+        notify_thresholds=maybe_send_threshold_notifications,
+        reconcile_decrease=reconcile_poll_decrease,
+        logger=logger,
+    )
+    vote_handlers = VoteHandlers(
+        admin_ids=ADMIN_IDS,
+        target_chat_id=CHAT_ID,
+        timezone=TIMEZONE,
+        threshold=YES_THRESHOLD,
+        polls=polls,
+        current_poll_id=lambda: current_poll_id,
+        save_state=save_state,
+        notify_thresholds=maybe_send_threshold_notifications,
+        announcement_manager=announcement_manager,
+    )
     schedule_commands = ScheduleAdminCommands(
         admin_ids=ADMIN_IDS,
         schedule_config=schedule_config,
         save_state=save_state,
         reschedule_jobs=reschedule_jobs,
     )
-    app.add_handler(PollHandler(handle_poll_update))
-    app.add_handler(PollAnswerHandler(handle_poll_answer))
+    app.add_handler(PollHandler(poll_handlers.update))
+    app.add_handler(PollAnswerHandler(poll_handlers.answer))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("poll", cmd_poll))
-    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("status", vote_handlers.status))
     app.add_handler(CommandHandler("announce", announcement_manager.start))
     app.add_handler(CommandHandler("cancel", announcement_manager.cancel))
-    app.add_handler(CommandHandler("plus1", cmd_plus1))
-    app.add_handler(CommandHandler("minus1", cmd_minus1))
+    app.add_handler(CommandHandler("plus1", vote_handlers.plus1))
+    app.add_handler(CommandHandler("minus1", vote_handlers.minus1))
     app.add_handler(CommandHandler("settime", schedule_commands.settime))
     app.add_handler(CommandHandler("setdays", schedule_commands.setdays))
     app.add_handler(
         CallbackQueryHandler(announcement_manager.handle_callback, pattern=r"^announce:")
     )
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_plain_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, vote_handlers.plain_text))
     app.add_error_handler(handle_error)
 
     logger.info("Бот запущен.")

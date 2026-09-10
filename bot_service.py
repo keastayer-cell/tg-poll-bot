@@ -285,9 +285,7 @@ async def close_poll(bot):
     return True
 
 
-def main():
-    logger.info("Запуск экземпляра '%s' с env-файлом: %s", INSTANCE_NAME, settings.env_path)
-    load_state()
+def build_application() -> Application:
     scheduler_manager = SchedulerManager(
         enabled=ENABLE_SCHEDULER,
         timezone=TIMEZONE,
@@ -363,6 +361,13 @@ def main():
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, vote_handlers.plain_text))
     app.add_error_handler(common_handlers.error)
+    return app
+
+
+def main():
+    logger.info("Запуск экземпляра '%s' с env-файлом: %s", INSTANCE_NAME, settings.env_path)
+    load_state()
+    app = build_application()
 
     logger.info("Бот запущен.")
     app.run_polling(allowed_updates=["poll", "poll_answer", "message", "callback_query"])

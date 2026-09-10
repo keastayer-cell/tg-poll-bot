@@ -205,3 +205,5 @@ make setup
 
 - Первичная production-установка и атомарные релизы: [deploy/README.md](deploy/README.md).
 - Проверка, восстановление состояния и диагностика: [OPERATIONS.md](OPERATIONS.md).
+- Настройки защиты GitHub: [GITHUB_SETUP.md](GITHUB_SETUP.md).
+- Состав следующего релиза: [RELEASES.md](RELEASES.md).

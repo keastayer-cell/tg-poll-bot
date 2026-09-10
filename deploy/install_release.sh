@@ -14,6 +14,7 @@ service_name=${BOT_SERVICE_NAME:-tg-poll-bot}
 service_user=${BOT_SERVICE_USER:-tg-poll-bot}
 service_group=${BOT_SERVICE_GROUP:-tg-poll-bot}
 health_timeout=${BOT_HEALTH_TIMEOUT_SECONDS:-30}
+releases_to_keep=${BOT_RELEASES_TO_KEEP:-5}
 
 if [[ ! $release_id =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "Release ID contains unsupported characters: $release_id" >&2
@@ -81,6 +82,18 @@ for ((attempt = 1; attempt <= health_timeout; attempt++)); do
   if "$current_link/venv/bin/python" "$current_link/deploy/check_bot_health.py"; then
     switched=0
     trap - ERR
+    current_target=$(readlink -f "$current_link")
+    mapfile -t installed_releases < <(
+      find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+        | sort -nr \
+        | cut -d' ' -f2-
+    )
+    for ((index = releases_to_keep; index < ${#installed_releases[@]}; index++)); do
+      old_release=${installed_releases[$index]}
+      if [[ $old_release != "$current_target" ]]; then
+        rm -rf -- "$old_release"
+      fi
+    done
     echo "Release $release_id is healthy"
     exit 0
   fi

@@ -17,7 +17,8 @@ The target layout keeps mutable data separate from versioned application code:
 `install_release.sh` prepares a new virtual environment before changing `current`.
 After the switch it restarts the service and waits for a fresh application
 heartbeat. If the new release does not become healthy, it restores the previous
-symlink and restarts that version.
+symlink and restarts that version. After a successful release it keeps the five
+newest release directories by default (`BOT_RELEASES_TO_KEEP` changes the limit).
 
 Before using release deployment for the first time:
 
@@ -27,6 +28,7 @@ Before using release deployment for the first time:
 4. Install `tg-poll-bot.service`, reload systemd and verify the service manually.
 5. Preserve the previous installation until the migrated service has handled a
    complete poll cycle.
+6. Create the GitHub `production` environment and place the deploy secrets in it.
 
 Create an archive with repository files at its root, upload it to the server,
 then run:

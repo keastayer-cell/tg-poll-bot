@@ -1,6 +1,6 @@
 import asyncio
 
-from bot_service import build_application
+from bot import build_application
 
 
 def test_application_can_be_built_without_network_access():

@@ -8,7 +8,7 @@ test:
 	venv/bin/pytest
 
 coverage:
-	venv/bin/pytest --cov=models --cov=poll_service --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
+	venv/bin/pytest --cov=models --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
 
 lint:
 	venv/bin/ruff check *.py deploy handlers tests

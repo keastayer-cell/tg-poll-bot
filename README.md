@@ -49,14 +49,17 @@
 ```
 tg-poll-bot/
 ├── main.py         # минимальная точка запуска
-├── bot_service.py  # сборка сервисов и прикладные операции
-├── bot.py          # совместимый старый entry point
+├── bot.py          # основная логика и сборка приложения
+├── config.py       # чтение и проверка настроек
+├── votes.py        # подсчёт голосов и тексты ответов
+├── scheduling.py   # расписание и восстановление задач
+├── announcements.py # объявления от имени бота
 ├── .env            # prod-конфигурация
 ├── .env.example    # пример конфигурации
 ├── .env.stage      # stage-конфигурация
 ├── .env.stage.example
 ├── run_stage.sh    # локальный запуск stage-бота
-├── storage.py      # атомарное хранение состояния
+├── storage.py      # состояние, атомарная запись и восстановление
 ├── health.py       # прикладной heartbeat
 ├── deploy/         # systemd, health-check и release rollback
 ├── tests/          # автоматические тесты
@@ -205,5 +208,3 @@ make setup
 
 - Первичная production-установка и атомарные релизы: [deploy/README.md](deploy/README.md).
 - Проверка, восстановление состояния и диагностика: [OPERATIONS.md](OPERATIONS.md).
-- Настройки защиты GitHub: [GITHUB_SETUP.md](GITHUB_SETUP.md).
-- Состав следующего релиза: [RELEASES.md](RELEASES.md).

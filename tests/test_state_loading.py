@@ -1,6 +1,6 @@
 import pytest
 
-import bot_service as bot
+import bot as bot
 from storage import StateLoadError
 
 

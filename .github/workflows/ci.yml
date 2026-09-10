@@ -36,7 +36,7 @@ jobs:
         run: ruff format --check *.py deploy handlers tests
 
       - name: Run tests
-        run: pytest --cov=models --cov=poll_service --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
+        run: pytest --cov=models --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
 
       - name: Compile application
         run: python -m py_compile *.py deploy/*.py handlers/*.py

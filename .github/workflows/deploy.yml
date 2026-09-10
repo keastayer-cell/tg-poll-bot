@@ -46,15 +46,15 @@ jobs:
         run: |
           ruff check *.py deploy handlers tests
           ruff format --check *.py deploy handlers tests
-          pytest --cov=models --cov=poll_service --cov=storage --cov=votes --cov-report=term --cov-fail-under=80
+          pytest --cov=models --cov=storage --cov=votes --cov-report=term --cov-fail-under=80
           python -m py_compile *.py deploy/*.py handlers/*.py
 
       - name: Build release archive
         run: |
           tar -czf "release-${GITHUB_SHA}.tar.gz" \
-            announcements.py bot.py bot_service.py main.py config.py health.py \
-            messages.py models.py poll_service.py schedule_commands.py scheduling.py \
-            storage.py runtime.py votes.py handlers deploy requirements.txt
+            announcements.py bot.py main.py config.py health.py \
+            models.py schedule_commands.py scheduling.py \
+            storage.py votes.py handlers deploy requirements.txt
 
       - name: Upload release archive
         uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7

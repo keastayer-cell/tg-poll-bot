@@ -1,10 +1,11 @@
 from collections.abc import Awaitable, Callable
 from typing import Optional
 
-from messages import compact_status, detailed_status
 from votes import (
     add_manual_yes_vote,
+    compact_status,
     current_yes_count,
+    detailed_status,
     display_user_name,
     parse_plus_one,
     remove_manual_yes_vote,

@@ -1,4 +1,4 @@
-from messages import compact_status, detailed_status, poll_instruction
+from votes import compact_status, detailed_status, poll_instruction
 
 
 def state(*, telegram_yes=3, tracked_names=None, manual_names=None, no=2):

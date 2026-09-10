@@ -19,13 +19,12 @@ permissions:
 
 concurrency:
   group: deploy-tg-poll-bot-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: production
 
     steps:
       - name: Checkout repository
@@ -42,30 +41,23 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip check
 
-      - name: Verify release
+      - name: Verify bot
         run: |
           ruff check *.py deploy handlers tests
           ruff format --check *.py deploy handlers tests
           pytest --cov=models --cov=storage --cov=votes --cov-report=term --cov-fail-under=80
           python -m py_compile *.py deploy/*.py handlers/*.py
 
-      - name: Build release archive
-        run: |
-          tar -czf "release-${GITHUB_SHA}.tar.gz" \
-            announcements.py bot.py main.py config.py health.py \
-            models.py schedule_commands.py scheduling.py \
-            storage.py votes.py handlers deploy requirements.txt
-
-      - name: Upload release archive
+      - name: Upload bot files
         uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: "release-${{ github.sha }}.tar.gz"
-          target: /opt/bot_tg/incoming
+          source: "announcements.py,bot.py,main.py,config.py,health.py,models.py,schedule_commands.py,scheduling.py,storage.py,votes.py,handlers,deploy/check_bot_health.py,requirements.txt"
+          target: /opt/bot_tg
 
-      - name: Install and verify release
+      - name: Restart and verify bot
         uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -73,10 +65,19 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
             set -euo pipefail
-            archive="/opt/bot_tg/incoming/release-${{ github.sha }}.tar.gz"
-            installer="/tmp/tg-poll-bot-install-${{ github.sha }}.sh"
-            tar -xOzf "$archive" deploy/install_release.sh > "$installer"
-            chmod 0700 "$installer"
-            "$installer" "$archive" "${{ github.sha }}" /opt/bot_tg
-            rm -f "$installer" "$archive"
-            echo "Bot ${{ github.sha }} deployed at $(date)"
+            cd /opt/bot_tg
+            venv/bin/pip install -q -r requirements.txt
+            venv/bin/python -m py_compile *.py handlers/*.py deploy/*.py
+            export BOT_HEALTH_FILE=/opt/bot_tg/health.json
+            export BOT_HEALTH_NOT_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%S%z)"
+            systemctl restart tg-poll-bot
+            systemctl is-active --quiet tg-poll-bot
+            for attempt in $(seq 1 30); do
+              if venv/bin/python deploy/check_bot_health.py; then
+                echo "Bot ${{ github.sha }} deployed at $(date)"
+                exit 0
+              fi
+              sleep 1
+            done
+            journalctl -u tg-poll-bot -n 100 --no-pager
+            exit 1

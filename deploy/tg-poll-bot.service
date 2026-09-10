@@ -5,32 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tg-poll-bot
-Group=tg-poll-bot
-WorkingDirectory=/opt/bot_tg/current
-EnvironmentFile=/opt/bot_tg/shared/.env
-Environment=DATA_DIR=/opt/bot_tg/shared
-ExecStart=/opt/bot_tg/current/venv/bin/python /opt/bot_tg/current/main.py
+WorkingDirectory=/opt/bot_tg
+EnvironmentFile=/opt/bot_tg/.env
+ExecStart=/opt/bot_tg/venv/bin/python /opt/bot_tg/main.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectKernelLogs=true
-ProtectControlGroups=true
-LockPersonality=true
-RestrictSUIDSGID=true
-RestrictRealtime=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=
-AmbientCapabilities=
-ReadWritePaths=/opt/bot_tg/shared
 UMask=0077
 
 [Install]

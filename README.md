@@ -61,7 +61,7 @@ tg-poll-bot/
 ├── run_stage.sh    # локальный запуск stage-бота
 ├── storage.py      # состояние, атомарная запись и восстановление
 ├── health.py       # прикладной heartbeat
-├── deploy/         # systemd, health-check и release rollback
+├── deploy/         # systemd и health-check
 ├── tests/          # автоматические тесты
 ├── state.json      # состояние опросов
 ├── bot.log         # лог бота
@@ -83,7 +83,7 @@ EXTRA_ADMIN_IDS=<telegram id доп. админов через запятую>
 TIMEZONE=Europe/Moscow
 YES_THRESHOLD=10
 POLL_QUESTION=Идете?
-DATA_DIR=/opt/bot_tg/shared
+DATA_DIR=/opt/bot_tg
 LOG_MAX_BYTES=5242880
 LOG_BACKUP_COUNT=3
 ANNOUNCE_TTL_SECONDS=300
@@ -206,5 +206,4 @@ make setup
 
 ## Развёртывание и эксплуатация
 
-- Первичная production-установка и атомарные релизы: [deploy/README.md](deploy/README.md).
-- Проверка, восстановление состояния и диагностика: [OPERATIONS.md](OPERATIONS.md).
+- Запуск, проверка состояния и диагностика: [OPERATIONS.md](OPERATIONS.md).

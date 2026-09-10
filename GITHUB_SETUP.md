@@ -1,43 +1,47 @@
-# GitHub production setup
+# Настройка GitHub для production
 
-These repository settings accompany the committed workflows and cannot be
-expressed completely as files in the repository.
+Эти настройки дополняют workflow-файлы из репозитория. Полностью задать их
+файлами нельзя, поэтому после публикации ветки их нужно применить в интерфейсе
+GitHub.
 
-## `main` ruleset
+## Защита ветки `main`
 
-Create a branch ruleset targeting `main`:
+Создайте ruleset для ветки `main` со следующими требованиями:
 
-- require a pull request before merge;
-- require the `test` status check;
-- require the branch to be up to date before merge;
-- block force pushes and branch deletion;
-- allow repository administrators to perform an emergency bypass, with the
-  bypass recorded in GitHub.
+- изменения принимаются только через pull request;
+- перед слиянием должен успешно пройти status check `test`;
+- ветка должна быть обновлена относительно `main` перед слиянием;
+- force push и удаление ветки запрещены;
+- администратор репозитория может выполнить аварийный обход правил, при этом
+  действие должно сохраняться в истории GitHub.
 
-## `production` environment
+## Environment `production`
 
-Create an environment named `production` and add:
+Создайте Environment с именем `production` и добавьте в него секреты:
 
-- `VPS_HOST`;
-- `VPS_USER`;
-- `DEPLOY_KEY`.
+- `VPS_HOST` — адрес production-сервера;
+- `VPS_USER` — пользователь для деплоя;
+- `DEPLOY_KEY` — приватный SSH-ключ деплоя.
 
-Restrict deployment branches to `main`. The current workflow deploys
-automatically after its checks; add required reviewers only if a manual gate is
-desired later.
+Разрешите деплой в Environment только из ветки `main`. Текущий workflow запускает
+деплой автоматически после успешных проверок. Обязательное ручное подтверждение
+можно добавить позднее через Required reviewers.
 
-## Actions and repository security
+## GitHub Actions и безопасность репозитория
 
-- Set the default workflow token permission to read-only contents.
-- Allow GitHub-authored actions plus the pinned `appleboy/scp-action` and
-  `appleboy/ssh-action` commits used by the deploy workflow.
-- Enable Dependabot alerts and security updates.
-- Enable secret scanning and push protection when available for the repository.
-- Keep `.env`, private keys and production state outside Git. Rotate a credential
-  immediately if secret scanning ever reports it in history.
+- Установите для `GITHUB_TOKEN` разрешения по умолчанию только на чтение
+  содержимого репозитория.
+- Разрешите официальные Actions от GitHub, а также закреплённые по commit SHA
+  `appleboy/scp-action` и `appleboy/ssh-action`, используемые при деплое.
+- Включите Dependabot alerts и Dependabot security updates.
+- Включите secret scanning и push protection, если они доступны для репозитория.
+- Храните `.env`, приватные ключи и production-состояние вне Git.
+- Если secret scanning когда-либо обнаружит секрет в истории, сразу отзовите и
+  замените соответствующий токен или ключ.
 
-## Visibility
+## Публичность репозитория
 
-The repository is currently public. Keep it public only if publishing the bot
-source is intentional. Changing visibility is an owner decision; secrets must
-remain external in either case.
+Сейчас репозиторий публичный. Оставляйте его публичным только в том случае, если
+публикация исходного кода бота является осознанным решением. Изменение видимости
+может выполнить владелец репозитория. Независимо от выбранной видимости секреты
+должны храниться только в GitHub Secrets и на production-сервере.

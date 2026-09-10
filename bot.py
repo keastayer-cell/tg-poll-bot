@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -31,9 +30,7 @@ from poll_service import evaluate_threshold_transition
 from schedule_commands import ScheduleAdminCommands
 from scheduling import (
     DEFAULT_SCHEDULE,
-    matches_schedule_day,
-    register_jobs,
-    schedule_datetime,
+    SchedulerManager,
 )
 from storage import JsonStateRepository, StateLoadError
 from votes import current_telegram_yes_count, current_yes_count
@@ -347,102 +344,6 @@ async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Сегодняшний активный опрос уже существует.")
 
 
-def reschedule_jobs(scheduler, bot):
-    """Пересоздаёт все cron-задания в планировщике по текущему schedule_config."""
-    for job_id in ("job_poll", "job_deadline", "job_close", "job_remind_wed", "job_remind_sun"):
-        try:
-            scheduler.remove_job(job_id)
-        except Exception:
-            pass
-    register_jobs(
-        scheduler,
-        bot,
-        schedule_config,
-        send_poll=send_poll,
-        check_deadline=check_deadline,
-        close_poll=close_poll,
-        remind_game=remind_game,
-    )
-    logger.info("Расписание пересоздано: %s", schedule_config)
-
-
-async def reconcile_schedule(bot, now: Optional[datetime] = None) -> None:
-    now = now or datetime.now(ZoneInfo(TIMEZONE))
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=ZoneInfo(TIMEZONE))
-    poll_date = now.strftime("%Y-%m-%d")
-    cfg = schedule_config
-
-    poll_at = schedule_datetime(now, cfg["poll_hour"], cfg["poll_minute"])
-    deadline_at = schedule_datetime(now, cfg["deadline_hour"], cfg["deadline_minute"])
-    close_at = schedule_datetime(now, cfg["close_hour"], cfg["close_minute"])
-    close_is_today = matches_schedule_day(now, cfg["close_days"])
-    before_close = not close_is_today or now < close_at
-
-    if matches_schedule_day(now, cfg["poll_days"]) and poll_at <= now and before_close:
-        await send_poll(bot, poll_date=poll_date)
-
-    state = polls.get(current_poll_id) if current_poll_id else None
-    active_today = state is not None and state.get("poll_date") == poll_date
-    if active_today and before_close:
-        if matches_schedule_day(now, cfg["deadline_days"]) and deadline_at <= now:
-            await check_deadline(bot)
-
-        for reminder_key in ("remind_wed", "remind_sun"):
-            reminder_at = schedule_datetime(
-                now,
-                cfg[f"{reminder_key}_hour"],
-                cfg[f"{reminder_key}_minute"],
-            )
-            if matches_schedule_day(now, cfg[f"{reminder_key}_days"]) and reminder_at <= now:
-                await remind_game(bot, reminder_key)
-
-    if close_is_today and close_at <= now and state is not None:
-        await close_poll(bot)
-
-
-async def check_bot_health(application: Application) -> None:
-    scheduler = application.bot_data.get("scheduler")
-    scheduler_running = bool(scheduler and scheduler.running)
-    healthy = await health_reporter.probe(
-        application.bot,
-        instance_name=INSTANCE_NAME,
-        scheduler_running=scheduler_running,
-        active_poll_id=current_poll_id,
-    )
-    if not healthy:
-        logger.warning("Health-check Telegram API завершился ошибкой")
-
-
-async def post_init(application: Application):
-    if not ENABLE_SCHEDULER:
-        logger.info("Планировщик отключен (ENABLE_SCHEDULER=0).")
-        return
-
-    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    reschedule_jobs(scheduler, application.bot)
-    scheduler.add_job(
-        check_bot_health,
-        "interval",
-        id="job_health",
-        seconds=settings.healthcheck_interval_seconds,
-        args=[application],
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.start()
-    application.bot_data["scheduler"] = scheduler
-    await check_bot_health(application)
-    await reconcile_schedule(application.bot)
-    logger.info("Планировщик запущен.")
-
-
-async def post_shutdown(application: Application):
-    scheduler = application.bot_data.get("scheduler")
-    if scheduler and scheduler.running:
-        scheduler.shutdown()
-
-
 async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(
         "Необработанная ошибка при обработке Telegram update=%r",
@@ -454,7 +355,27 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 def main():
     logger.info("Запуск экземпляра '%s' с env-файлом: %s", INSTANCE_NAME, settings.env_path)
     load_state()
-    builder = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown)
+    scheduler_manager = SchedulerManager(
+        enabled=ENABLE_SCHEDULER,
+        timezone=TIMEZONE,
+        health_interval_seconds=settings.healthcheck_interval_seconds,
+        schedule_config=schedule_config,
+        polls=polls,
+        current_poll_id=lambda: current_poll_id,
+        send_poll=send_poll,
+        check_deadline=check_deadline,
+        close_poll=close_poll,
+        remind_game=remind_game,
+        health_reporter=health_reporter,
+        instance_name=INSTANCE_NAME,
+        logger=logger,
+    )
+    builder = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(scheduler_manager.start)
+        .post_shutdown(scheduler_manager.shutdown)
+    )
     if settings.proxy_url:
         builder = builder.proxy(settings.proxy_url).get_updates_proxy(settings.proxy_url)
         logger.info("Используется прокси")
@@ -481,7 +402,7 @@ def main():
         admin_ids=ADMIN_IDS,
         schedule_config=schedule_config,
         save_state=save_state,
-        reschedule_jobs=reschedule_jobs,
+        reschedule_jobs=scheduler_manager.reschedule,
     )
     app.add_handler(PollHandler(poll_handlers.update))
     app.add_handler(PollAnswerHandler(poll_handlers.answer))

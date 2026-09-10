@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 
 import bot
+from scheduling import SchedulerManager
 
 from .fakes import FakeBot
 
@@ -32,11 +33,29 @@ def active_state(date="2026-09-09", *, quorum=False):
     }
 
 
+def scheduler_manager():
+    return SchedulerManager(
+        enabled=True,
+        timezone=bot.TIMEZONE,
+        health_interval_seconds=60,
+        schedule_config=bot.schedule_config,
+        polls=bot.polls,
+        current_poll_id=lambda: bot.current_poll_id,
+        send_poll=bot.send_poll,
+        check_deadline=bot.check_deadline,
+        close_poll=bot.close_poll,
+        remind_game=bot.remind_game,
+        health_reporter=bot.health_reporter,
+        instance_name="pytest",
+        logger=bot.logger,
+    )
+
+
 def test_restart_after_poll_time_creates_missing_poll(monkeypatch):
     reset_schedule_state(monkeypatch)
     fake_bot = FakeBot()
 
-    asyncio.run(bot.reconcile_schedule(fake_bot, datetime(2026, 9, 9, 10, 0)))
+    asyncio.run(scheduler_manager().reconcile(fake_bot, datetime(2026, 9, 9, 10, 0)))
 
     assert bot.current_poll_id == "new-poll"
     assert bot.polls["new-poll"]["poll_date"] == "2026-09-09"
@@ -46,7 +65,7 @@ def test_restart_after_close_does_not_create_late_poll(monkeypatch):
     reset_schedule_state(monkeypatch)
     fake_bot = FakeBot()
 
-    asyncio.run(bot.reconcile_schedule(fake_bot, datetime(2026, 9, 9, 20, 30)))
+    asyncio.run(scheduler_manager().reconcile(fake_bot, datetime(2026, 9, 9, 20, 30)))
 
     assert bot.current_poll_id is None
 
@@ -58,8 +77,9 @@ def test_restart_sends_due_reminder_only_once(monkeypatch):
     monkeypatch.setattr(bot, "polls", {"poll": state})
     monkeypatch.setattr(bot, "current_poll_id", "poll")
 
-    asyncio.run(bot.reconcile_schedule(fake_bot, datetime(2026, 9, 9, 19, 50)))
-    asyncio.run(bot.reconcile_schedule(fake_bot, datetime(2026, 9, 9, 19, 55)))
+    manager = scheduler_manager()
+    asyncio.run(manager.reconcile(fake_bot, datetime(2026, 9, 9, 19, 50)))
+    asyncio.run(manager.reconcile(fake_bot, datetime(2026, 9, 9, 19, 55)))
 
     reminder_messages = [item for item in fake_bot.messages if item["chat_id"] == bot.CHAT_ID]
     assert len(reminder_messages) == 1
@@ -73,7 +93,7 @@ def test_restart_after_close_closes_existing_poll(monkeypatch):
     monkeypatch.setattr(bot, "polls", {"poll": state})
     monkeypatch.setattr(bot, "current_poll_id", "poll")
 
-    asyncio.run(bot.reconcile_schedule(fake_bot, datetime(2026, 9, 9, 20, 30)))
+    asyncio.run(scheduler_manager().reconcile(fake_bot, datetime(2026, 9, 9, 20, 30)))
 
     assert fake_bot.stopped_polls == [{"chat_id": bot.CHAT_ID, "message_id": 100}]
     assert bot.current_poll_id is None

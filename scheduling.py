@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram.error import TelegramError
 
 DEFAULT_SCHEDULE = {
     "poll_hour": 9,
@@ -184,19 +185,33 @@ class SchedulerManager:
             self.logger.warning("Health-check Telegram API завершился ошибкой")
             if self.health_reporter.alert_failure:
                 for admin_id in self.admin_ids:
-                    await application.bot.send_message(
-                        chat_id=admin_id,
-                        text=(
-                            "⚠️ Бот несколько раз подряд не смог обратиться к Telegram API. "
-                            "Проверьте сервис и сеть."
-                        ),
-                    )
+                    try:
+                        await application.bot.send_message(
+                            chat_id=admin_id,
+                            text=(
+                                "⚠️ Бот несколько раз подряд не смог обратиться к Telegram API. "
+                                "Проверьте сервис и сеть."
+                            ),
+                        )
+                    except TelegramError as error:
+                        self.logger.warning(
+                            "Не удалось отправить health-алерт admin_id=%s: %s",
+                            admin_id,
+                            error,
+                        )
         elif self.health_reporter.alert_recovery:
             for admin_id in self.admin_ids:
-                await application.bot.send_message(
-                    chat_id=admin_id,
-                    text="✅ Связь бота с Telegram API восстановлена.",
-                )
+                try:
+                    await application.bot.send_message(
+                        chat_id=admin_id,
+                        text="✅ Связь бота с Telegram API восстановлена.",
+                    )
+                except TelegramError as error:
+                    self.logger.warning(
+                        "Не удалось отправить health-восстановление admin_id=%s: %s",
+                        admin_id,
+                        error,
+                    )
 
     async def start(self, application) -> None:
         if not self.enabled:

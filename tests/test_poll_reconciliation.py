@@ -55,11 +55,11 @@ def prepare(monkeypatch):
     fake_bot = FakeBot()
     application = FakeApplication()
     context = SimpleNamespace(bot=fake_bot, application=application)
-    monkeypatch.setattr(bot, "polls", {"poll": state})
+    monkeypatch.setattr(bot.runtime, "polls", {"poll": state})
     monkeypatch.setattr(bot, "save_state", lambda: None)
     monkeypatch.setattr(bot, "POLL_RECONCILE_DELAY_SECONDS", 0)
     handlers = PollHandlers(
-        polls=bot.polls,
+        polls=bot.runtime.polls,
         save_state=bot.save_state,
         notify_thresholds=bot.maybe_send_threshold_notifications,
         reconcile_decrease=bot.reconcile_poll_decrease,

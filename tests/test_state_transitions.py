@@ -35,8 +35,8 @@ def test_deadline_flag_is_saved_before_notification(monkeypatch):
     state = base_state()
     saves = []
     fake_bot = DeadlineBot()
-    monkeypatch.setattr(bot, "current_poll_id", "poll")
-    monkeypatch.setattr(bot, "polls", {"poll": state})
+    monkeypatch.setattr(bot.runtime, "current_poll_id", "poll")
+    monkeypatch.setattr(bot.runtime, "polls", {"poll": state})
     monkeypatch.setattr(bot, "ADMIN_IDS", [42])
     monkeypatch.setattr(bot, "save_state", lambda: saves.append(state["notified_deadline"]))
 
@@ -49,12 +49,12 @@ def test_deadline_flag_is_saved_before_notification(monkeypatch):
 def test_failed_close_keeps_active_poll_for_retry(monkeypatch):
     state = base_state()
     polls = {"poll": state}
-    monkeypatch.setattr(bot, "current_poll_id", "poll")
-    monkeypatch.setattr(bot, "polls", polls)
+    monkeypatch.setattr(bot.runtime, "current_poll_id", "poll")
+    monkeypatch.setattr(bot.runtime, "polls", polls)
     monkeypatch.setattr(bot, "save_state", lambda: None)
 
     closed = asyncio.run(bot.close_poll(ClosingBot()))
 
     assert closed is False
-    assert bot.current_poll_id == "poll"
+    assert bot.runtime.current_poll_id == "poll"
     assert polls["poll"]["close_failed"] is True

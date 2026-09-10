@@ -11,8 +11,8 @@ def test_new_poll_unpins_only_previous_poll(monkeypatch):
         "poll_date": "2000-01-01",
         "message_id": 100,
     }
-    monkeypatch.setattr(bot, "polls", {"old-poll": previous_state})
-    monkeypatch.setattr(bot, "current_poll_id", "old-poll")
+    monkeypatch.setattr(bot.runtime, "polls", {"old-poll": previous_state})
+    monkeypatch.setattr(bot.runtime, "current_poll_id", "old-poll")
     monkeypatch.setattr(bot, "ADMIN_IDS", [])
     monkeypatch.setattr(bot, "save_state", lambda: None)
 

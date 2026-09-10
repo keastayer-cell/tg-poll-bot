@@ -1,4 +1,4 @@
-.PHONY: setup test lint format stage
+.PHONY: setup test coverage lint format stage
 
 setup:
 	python3 -m venv venv
@@ -6,6 +6,9 @@ setup:
 
 test:
 	venv/bin/pytest
+
+coverage:
+	venv/bin/pytest --cov=models --cov=poll_service --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
 
 lint:
 	venv/bin/ruff check *.py deploy handlers tests

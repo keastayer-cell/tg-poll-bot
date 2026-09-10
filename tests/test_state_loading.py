@@ -22,7 +22,7 @@ def test_future_state_schema_is_rejected(monkeypatch):
             "schedule_config": {},
         }
     )
-    monkeypatch.setattr(bot, "state_repository", repository)
+    monkeypatch.setattr(bot.runtime, "repository", repository)
 
     with pytest.raises(StateLoadError, match="новее поддерживаемой"):
         bot.load_state()
@@ -36,7 +36,7 @@ def test_invalid_polls_shape_is_rejected(monkeypatch):
             "schedule_config": {},
         }
     )
-    monkeypatch.setattr(bot, "state_repository", repository)
+    monkeypatch.setattr(bot.runtime, "repository", repository)
 
     with pytest.raises(StateLoadError, match="polls"):
         bot.load_state()

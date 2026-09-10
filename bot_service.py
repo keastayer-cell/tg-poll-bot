@@ -6,13 +6,11 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from telegram import Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
-    ContextTypes,
     MessageHandler,
     PollAnswerHandler,
     PollHandler,
@@ -21,19 +19,21 @@ from telegram.ext import (
 
 from announcements import AnnouncementManager
 from config import load_settings
+from handlers.admin import AdminHandlers
+from handlers.common import CommonHandlers
 from handlers.polls import PollHandlers
 from handlers.votes import VoteHandlers
 from health import HealthReporter
 from messages import admin_poll_started, deadline_warning, game_reminder, poll_instruction
-from models import BotSnapshot, snapshot_from_json
 from models import new_poll_state as build_poll_state
 from poll_service import evaluate_threshold_transition
+from runtime import BotRuntime
 from schedule_commands import ScheduleAdminCommands
 from scheduling import (
     DEFAULT_SCHEDULE,
     SchedulerManager,
 )
-from storage import JsonStateRepository, StateLoadError
+from storage import JsonStateRepository
 from votes import current_telegram_yes_count, current_yes_count
 
 _BASE_DIR = str(Path(__file__).resolve().parent)
@@ -69,32 +69,19 @@ ANNOUNCE_TTL_SECONDS = settings.announce_ttl_seconds
 MAX_ANNOUNCEMENT_LENGTH = 3500
 POLL_RECONCILE_DELAY_SECONDS = settings.poll_reconcile_delay_seconds
 
-schedule_config: dict = dict(DEFAULT_SCHEDULE)
-
 STATE_FILE = str(settings.data_dir / "state.json")
 STATE_SCHEMA_VERSION = 2
-state_repository = JsonStateRepository(STATE_FILE)
+runtime = BotRuntime(
+    repository=JsonStateRepository(STATE_FILE),
+    default_schedule=DEFAULT_SCHEDULE,
+    logger=logger,
+    schema_version=STATE_SCHEMA_VERSION,
+)
 health_reporter = HealthReporter(
     str(settings.data_dir / "health.json"),
     failure_threshold=settings.health_failure_threshold,
 )
 
-# Словарь: poll_id -> данные этого конкретного опроса
-# {
-#   poll_id: {
-#       "yes_voters": {},  # текущие "ДА": {user_id: "Имя Фамилия"}
-#       "yes_count": 0,
-#       "no_count": 0,
-#       "notified_almost": False,
-#       "notified_yes": False,
-#       "notified_deadline": False,
-#   }
-# }
-polls: dict = {}
-
-# poll_id последнего созданного опроса (для дедлайна 15:00)
-current_poll_id: Optional[str] = None
-last_poll_message_id: Optional[int] = None
 announcement_manager = AnnouncementManager(
     admin_ids=ADMIN_IDS,
     target_chat_id=CHAT_ID,
@@ -108,39 +95,11 @@ def current_poll_date() -> str:
 
 
 def save_state():
-    snapshot = BotSnapshot(
-        polls=polls,
-        current_poll_id=current_poll_id,
-        last_poll_message_id=last_poll_message_id,
-        schedule_config=schedule_config,
-    )
-    state_repository.save(snapshot.to_json(STATE_SCHEMA_VERSION))
+    runtime.save()
 
 
 def load_state():
-    global polls, current_poll_id, last_poll_message_id, schedule_config
-    data = state_repository.load()
-    if data is None:
-        return
-    if state_repository.recovered_from_backup:
-        logger.warning("Основной state.json повреждён, состояние восстановлено из резервной копии")
-
-    try:
-        snapshot = snapshot_from_json(
-            data,
-            default_schedule=DEFAULT_SCHEDULE,
-            supported_schema_version=STATE_SCHEMA_VERSION,
-        )
-    except (TypeError, ValueError) as error:
-        raise StateLoadError(str(error)) from error
-    polls = snapshot.polls
-    current_poll_id = snapshot.current_poll_id
-    last_poll_message_id = snapshot.last_poll_message_id
-    schedule_config = snapshot.schedule_config
-    logger.info(
-        "Состояние восстановлено: current_poll_id=%s, опросов=%d", current_poll_id, len(polls)
-    )
-    logger.info("Расписание из state.json: %s", schedule_config)
+    runtime.load()
 
 
 def new_poll_state(poll_date: Optional[str] = None) -> dict:
@@ -171,7 +130,7 @@ async def maybe_send_threshold_notifications(bot, poll_id: str, state: dict) -> 
 
 async def reconcile_poll_decrease(bot, poll_id: str, expected_yes_count: int) -> None:
     await asyncio.sleep(POLL_RECONCILE_DELAY_SECONDS)
-    state = polls.get(poll_id)
+    state = runtime.polls.get(poll_id)
     if state is None:
         return
     if current_telegram_yes_count(state) != expected_yes_count:
@@ -180,18 +139,16 @@ async def reconcile_poll_decrease(bot, poll_id: str, expected_yes_count: int) ->
 
 
 async def send_poll(bot, poll_date: Optional[str] = None):
-    global current_poll_id, last_poll_message_id
-
     target_date = poll_date or current_poll_date()
-    active_state = polls.get(current_poll_id) if current_poll_id else None
+    active_state = runtime.polls.get(runtime.current_poll_id) if runtime.current_poll_id else None
     if active_state and active_state.get("poll_date") == target_date:
         logger.warning(
             "Пропускаю создание опроса: на сегодня уже есть активный poll_id=%s",
-            current_poll_id,
+            runtime.current_poll_id,
         )
         return False
 
-    previous_message_id = last_poll_message_id
+    previous_message_id = runtime.last_poll_message_id
     if previous_message_id is None and active_state:
         previous_message_id = active_state.get("message_id")
 
@@ -204,10 +161,10 @@ async def send_poll(bot, poll_date: Optional[str] = None):
     )
     poll_id = message.poll.id
     msg_id = message.message_id
-    polls[poll_id] = new_poll_state(target_date)
-    polls[poll_id]["message_id"] = msg_id
-    current_poll_id = poll_id
-    last_poll_message_id = msg_id
+    runtime.polls[poll_id] = new_poll_state(target_date)
+    runtime.polls[poll_id]["message_id"] = msg_id
+    runtime.current_poll_id = poll_id
+    runtime.last_poll_message_id = msg_id
     save_state()
     logger.info("Опрос создан, poll_id=%s, message_id=%s", poll_id, msg_id)
 
@@ -257,9 +214,9 @@ async def send_poll(bot, poll_date: Optional[str] = None):
 
 async def check_deadline(bot):
     """Вызывается в 15:00 — проверяет последний созданный опрос."""
-    if current_poll_id is None:
+    if runtime.current_poll_id is None:
         return
-    state = polls.get(current_poll_id)
+    state = runtime.polls.get(runtime.current_poll_id)
     if state is None:
         return
     if state["notified_yes"]:
@@ -280,9 +237,9 @@ async def check_deadline(bot):
 
 async def remind_game(bot, reminder_key: str):
     """Напоминание об игре — только если набрано 10+ ДА."""
-    if current_poll_id is None:
+    if runtime.current_poll_id is None:
         return
-    state = polls.get(current_poll_id)
+    state = runtime.polls.get(runtime.current_poll_id)
     if state is None:
         return
     if not state["notified_yes"]:
@@ -304,10 +261,9 @@ async def remind_game(bot, reminder_key: str):
 
 async def close_poll(bot):
     """Вызывается в 20:00 — закрывает опрос и чистит состояние."""
-    global current_poll_id
-    if current_poll_id is None:
+    if runtime.current_poll_id is None:
         return
-    state = polls.get(current_poll_id)
+    state = runtime.polls.get(runtime.current_poll_id)
     if state is None:
         return
     # Закрываем опрос в Telegram
@@ -315,46 +271,18 @@ async def close_poll(bot):
     if msg_id:
         try:
             await bot.stop_poll(chat_id=CHAT_ID, message_id=msg_id)
-            logger.info("Опрос poll_id=%s закрыт", current_poll_id)
+            logger.info("Опрос poll_id=%s закрыт", runtime.current_poll_id)
         except TelegramError as e:
             logger.warning("Не удалось закрыть опрос: %s", e)
             state["close_failed"] = True
             save_state()
             return False
     # Чистим состояние
-    polls.pop(current_poll_id, None)
-    current_poll_id = None
+    runtime.polls.pop(runtime.current_poll_id, None)
+    runtime.current_poll_id = None
     save_state()
     logger.info("Состояние очищено")
     return True
-
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Бля, ты чо меня будишь, а братик 😅\n"
-        "Я просто бот и делаю для уважаемых людей опрос.\n"
-        "Отвали по брацки 🙂"
-    )
-
-
-async def cmd_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ручной запуск опроса командой /poll (только для админа)."""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    created = await send_poll(context.bot)
-    if created:
-        await update.message.reply_text("Опрос запущен вручную.")
-    else:
-        await update.message.reply_text("Сегодняшний активный опрос уже существует.")
-
-
-async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    error = context.error
-    logger.error(
-        "Необработанная ошибка при обработке Telegram update=%r",
-        update,
-        exc_info=(type(error), error, error.__traceback__) if error else None,
-    )
 
 
 def main():
@@ -364,9 +292,9 @@ def main():
         enabled=ENABLE_SCHEDULER,
         timezone=TIMEZONE,
         health_interval_seconds=settings.healthcheck_interval_seconds,
-        schedule_config=schedule_config,
-        polls=polls,
-        current_poll_id=lambda: current_poll_id,
+        schedule_config=runtime.schedule_config,
+        polls=runtime.polls,
+        current_poll_id=lambda: runtime.current_poll_id,
         send_poll=send_poll,
         check_deadline=check_deadline,
         close_poll=close_poll,
@@ -387,7 +315,7 @@ def main():
         logger.info("Используется прокси")
     app = builder.build()
     poll_handlers = PollHandlers(
-        polls=polls,
+        polls=runtime.polls,
         save_state=save_state,
         notify_thresholds=maybe_send_threshold_notifications,
         reconcile_decrease=reconcile_poll_decrease,
@@ -398,34 +326,43 @@ def main():
         target_chat_id=CHAT_ID,
         timezone=TIMEZONE,
         threshold=YES_THRESHOLD,
-        polls=polls,
-        current_poll_id=lambda: current_poll_id,
+        polls=runtime.polls,
+        current_poll_id=lambda: runtime.current_poll_id,
         save_state=save_state,
         notify_thresholds=maybe_send_threshold_notifications,
         announcement_manager=announcement_manager,
     )
     schedule_commands = ScheduleAdminCommands(
         admin_ids=ADMIN_IDS,
-        schedule_config=schedule_config,
+        schedule_config=runtime.schedule_config,
         save_state=save_state,
         reschedule_jobs=scheduler_manager.reschedule,
     )
+    common_handlers = CommonHandlers(
+        admin_ids=ADMIN_IDS,
+        send_poll=send_poll,
+        logger=logger,
+    )
+    admin_handlers = AdminHandlers(
+        announcements=announcement_manager,
+        schedule=schedule_commands,
+    )
     app.add_handler(PollHandler(poll_handlers.update))
     app.add_handler(PollAnswerHandler(poll_handlers.answer))
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("poll", cmd_poll))
+    app.add_handler(CommandHandler("start", common_handlers.start))
+    app.add_handler(CommandHandler("poll", common_handlers.poll))
     app.add_handler(CommandHandler("status", vote_handlers.status))
-    app.add_handler(CommandHandler("announce", announcement_manager.start))
-    app.add_handler(CommandHandler("cancel", announcement_manager.cancel))
+    app.add_handler(CommandHandler("announce", admin_handlers.announce))
+    app.add_handler(CommandHandler("cancel", admin_handlers.cancel))
     app.add_handler(CommandHandler("plus1", vote_handlers.plus1))
     app.add_handler(CommandHandler("minus1", vote_handlers.minus1))
-    app.add_handler(CommandHandler("settime", schedule_commands.settime))
-    app.add_handler(CommandHandler("setdays", schedule_commands.setdays))
+    app.add_handler(CommandHandler("settime", admin_handlers.settime))
+    app.add_handler(CommandHandler("setdays", admin_handlers.setdays))
     app.add_handler(
-        CallbackQueryHandler(announcement_manager.handle_callback, pattern=r"^announce:")
+        CallbackQueryHandler(admin_handlers.announcement_callback, pattern=r"^announce:")
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, vote_handlers.plain_text))
-    app.add_error_handler(handle_error)
+    app.add_error_handler(common_handlers.error)
 
     logger.info("Бот запущен.")
     app.run_polling(allowed_updates=["poll", "poll_answer", "message", "callback_query"])

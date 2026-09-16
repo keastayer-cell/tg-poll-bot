@@ -74,6 +74,16 @@ def test_named_plus_one_remembers_entered_name():
     assert "Иванов Иван" in update.message.replies[0]["text"]
 
 
+def test_named_plus_one_with_single_space_is_handled():
+    state, context, handlers = prepare_context()
+    update = make_update("+1 Трактин")
+
+    asyncio.run(handlers.plain_text(update, context))
+
+    assert manual_vote_labels(state) == ["Трактин"]
+    assert "Трактин" in update.message.replies[0]["text"]
+
+
 def test_unrelated_text_is_ignored():
     state, context, handlers = prepare_context()
     update = make_update("Со мной будет +1")

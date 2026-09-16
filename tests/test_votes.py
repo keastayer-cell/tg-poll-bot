@@ -45,9 +45,16 @@ def test_named_plus_one_is_normalized():
     assert parse_plus_one("+1   Иванов   Иван", "Stayer") == "Иванов Иван"
 
 
+def test_named_plus_one_accepts_space_compact_and_invisible_separator():
+    assert parse_plus_one("+1 Трактин", "Stayer") == "Трактин"
+    assert parse_plus_one("+1Трактин", "Stayer") == "Трактин"
+    assert parse_plus_one("+1\u200b Трактин", "Stayer") == "Трактин"
+
+
 def test_bare_plus_one_uses_sender_name():
     assert parse_plus_one("+1", "Stayer") == "Гость от Stayer"
 
 
 def test_plus_one_inside_sentence_is_ignored():
     assert parse_plus_one("Со мной будет +1 Иванов", "Stayer") is None
+    assert parse_plus_one("+12", "Stayer") is None

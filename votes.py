@@ -1,11 +1,12 @@
-import re
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from models import ManualVote, NotificationEvent, normalize_manual_vote
 
-PLUS_ONE_PATTERN = re.compile(r"^\+1(?:\s+(.+))?$")
+INVISIBLE_MESSAGE_CHARACTERS = str.maketrans(
+    {"\u200b": None, "\u200c": None, "\u200d": None, "\ufeff": None}
+)
 
 
 def display_user_name(user) -> str:
@@ -19,13 +20,15 @@ def display_user_name(user) -> str:
 
 
 def parse_plus_one(text: str, author_name: str) -> Optional[str]:
-    match = PLUS_ONE_PATTERN.fullmatch(text.strip())
-    if match is None:
+    normalized = text.translate(INVISIBLE_MESSAGE_CHARACTERS).strip()
+    if normalized == "+1":
+        return f"Гость от {author_name}"
+    if not normalized.startswith("+1"):
         return None
-    guest_name = match.group(1)
-    if guest_name:
-        return " ".join(guest_name.split())
-    return f"Гость от {author_name}"
+    guest_name = normalized[2:].strip()
+    if not guest_name or not guest_name[0].isalpha():
+        return None
+    return " ".join(guest_name.split())
 
 
 def current_yes_count(state: dict) -> int:

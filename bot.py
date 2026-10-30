@@ -317,7 +317,6 @@ def build_application() -> Application:
     scheduler_manager = SchedulerManager(
         enabled=ENABLE_SCHEDULER,
         timezone=TIMEZONE,
-        health_interval_seconds=settings.healthcheck_interval_seconds,
         schedule_config=runtime.schedule_config,
         polls=runtime.polls,
         current_poll_id=lambda: runtime.current_poll_id,

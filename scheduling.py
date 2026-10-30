@@ -88,7 +88,6 @@ class SchedulerManager:
         *,
         enabled: bool,
         timezone: str,
-        health_interval_seconds: int,
         schedule_config: dict,
         polls: dict,
         current_poll_id,
@@ -103,7 +102,7 @@ class SchedulerManager:
     ):
         self.enabled = enabled
         self.timezone = timezone
-        self.health_interval_seconds = health_interval_seconds
+        self.health_application = None
         self.schedule_config = schedule_config
         self.polls = polls
         self.current_poll_id = current_poll_id
@@ -137,7 +136,27 @@ class SchedulerManager:
             close_poll=self.close_poll,
             remind_game=self.remind_game,
         )
+        if self.health_application is not None:
+            self.register_health_jobs(scheduler, self.health_application)
         self.logger.info("Расписание пересоздано: %s", self.schedule_config)
+
+    def register_health_jobs(self, scheduler, application) -> None:
+        # Hourly every day; extra checks on poll days. No duplicate at minute zero.
+        for job_id, days, minutes in (
+            ("job_health", "*", "0"),
+            ("job_health_poll_days", self.schedule_config["poll_days"], "15,30,45"),
+        ):
+            scheduler.add_job(
+                self.check_health,
+                "cron",
+                id=job_id,
+                day_of_week=days,
+                minute=minutes,
+                args=[application],
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
 
     async def reconcile(self, bot, now: Optional[datetime] = None) -> None:
         now = now or datetime.now(ZoneInfo(self.timezone))
@@ -232,16 +251,8 @@ class SchedulerManager:
             self.logger.info("Планировщик отключен (ENABLE_SCHEDULER=0).")
             return
         scheduler = AsyncIOScheduler(timezone=self.timezone)
+        self.health_application = application
         self.reschedule(scheduler, application.bot)
-        scheduler.add_job(
-            self.check_health,
-            "interval",
-            id="job_health",
-            seconds=self.health_interval_seconds,
-            args=[application],
-            max_instances=1,
-            coalesce=True,
-        )
         scheduler.start()
         application.bot_data["scheduler"] = scheduler
         await self.check_health(application)

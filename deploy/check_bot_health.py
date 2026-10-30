@@ -44,7 +44,7 @@ def check_health(
 def main() -> int:
     path = Path(os.getenv("BOT_HEALTH_FILE", "/opt/bot_tg/health.json"))
     try:
-        max_age_seconds = int(os.getenv("BOT_HEALTH_MAX_AGE_SECONDS", "180"))
+        max_age_seconds = int(os.getenv("BOT_HEALTH_MAX_AGE_SECONDS", "3900"))
     except ValueError:
         print("BOT_HEALTH_MAX_AGE_SECONDS должен быть целым числом")
         return 2

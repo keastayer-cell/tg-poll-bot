@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from deploy.check_bot_health import check_health
+from deploy.check_bot_health import check_health, main
 
 
 def write_report(path, *, now, status="ok", scheduler_running=True):
@@ -64,3 +64,15 @@ def test_report_from_before_restart_is_rejected(tmp_path):
 
     assert healthy is False
     assert "после запуска" in message
+
+
+def test_default_max_age_allows_hourly_checks(monkeypatch, tmp_path):
+    now = datetime.now(timezone.utc)
+    path = tmp_path / "health.json"
+    monkeypatch.setenv("BOT_HEALTH_FILE", str(path))
+    monkeypatch.delenv("BOT_HEALTH_MAX_AGE_SECONDS", raising=False)
+    monkeypatch.delenv("BOT_HEALTH_NOT_BEFORE", raising=False)
+    write_report(path, now=now - timedelta(seconds=3600))
+    assert main() == 0
+    write_report(path, now=now - timedelta(seconds=4000))
+    assert main() == 1

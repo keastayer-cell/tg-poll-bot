@@ -37,7 +37,6 @@ def scheduler_manager():
     return SchedulerManager(
         enabled=True,
         timezone=bot.TIMEZONE,
-        health_interval_seconds=60,
         schedule_config=bot.runtime.schedule_config,
         polls=bot.runtime.polls,
         current_poll_id=lambda: bot.runtime.current_poll_id,

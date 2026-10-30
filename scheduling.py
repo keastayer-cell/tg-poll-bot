@@ -182,9 +182,16 @@ class SchedulerManager:
             active_poll_id=self.current_poll_id(),
         )
         if not healthy:
-            self.logger.warning("Health-check Telegram API завершился ошибкой")
+            self.logger.warning(
+                "Health-check Telegram API завершился ошибкой: %s, подряд=%s",
+                self.health_reporter.last_error_type,
+                self.health_reporter.consecutive_failures,
+            )
             if self.health_reporter.alert_failure:
                 for admin_id in self.admin_ids:
+                    if not self.health_reporter.notification_due(admin_id):
+                        continue
+                    self.health_reporter.record_notification(admin_id)
                     try:
                         await application.bot.send_message(
                             chat_id=admin_id,
@@ -193,6 +200,7 @@ class SchedulerManager:
                                 "Проверьте сервис и сеть."
                             ),
                         )
+                        self.health_reporter.record_notification(admin_id, delivered=True)
                     except TelegramError as error:
                         self.logger.warning(
                             "Не удалось отправить health-алерт admin_id=%s: %s",
@@ -201,10 +209,16 @@ class SchedulerManager:
                         )
         elif self.health_reporter.alert_recovery:
             for admin_id in self.admin_ids:
+                if not self.health_reporter.notification_due(admin_id, recovery=True):
+                    continue
+                self.health_reporter.record_notification(admin_id, recovery=True)
                 try:
                     await application.bot.send_message(
                         chat_id=admin_id,
                         text="✅ Связь бота с Telegram API восстановлена.",
+                    )
+                    self.health_reporter.record_notification(
+                        admin_id, recovery=True, delivered=True
                     )
                 except TelegramError as error:
                     self.logger.warning(

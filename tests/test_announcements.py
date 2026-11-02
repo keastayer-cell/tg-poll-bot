@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from announcements import AnnouncementManager
+from app.announcements import AnnouncementManager
 
 from .fakes import FakeBot, make_update
 

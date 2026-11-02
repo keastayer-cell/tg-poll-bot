@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-import bot as bot
+from app import bot
 
 from .fakes import FakeBot, make_update
 

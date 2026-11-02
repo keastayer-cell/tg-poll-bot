@@ -4,7 +4,12 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from scheduling import DEFAULT_SCHEDULE, SchedulerManager, matches_schedule_day, schedule_datetime
+from app.scheduling import (
+    DEFAULT_SCHEDULE,
+    SchedulerManager,
+    matches_schedule_day,
+    schedule_datetime,
+)
 
 
 def test_matches_configured_weekday():

@@ -2,7 +2,7 @@ import asyncio
 
 from telegram.error import TelegramError
 
-import bot as bot
+from app import bot
 
 
 class DeadlineBot:

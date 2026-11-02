@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from votes import (
+from app.votes import (
     add_manual_yes_vote,
     manual_vote_labels,
     parse_plus_one,

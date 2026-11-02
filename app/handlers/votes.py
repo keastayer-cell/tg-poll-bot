@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Optional
 
-from votes import (
+from app.votes import (
     add_manual_yes_vote,
     compact_status,
     current_yes_count,

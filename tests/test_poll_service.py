@@ -1,4 +1,4 @@
-from votes import evaluate_threshold_transition
+from app.votes import evaluate_threshold_transition
 
 
 def state(previous, *, notified_yes=False, notified_almost=False, label=None):

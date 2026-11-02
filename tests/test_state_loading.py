@@ -1,7 +1,7 @@
 import pytest
 
-import bot as bot
-from storage import StateLoadError
+from app import bot
+from app.storage import StateLoadError
 
 
 class StaticRepository:

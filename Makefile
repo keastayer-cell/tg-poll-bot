@@ -8,15 +8,15 @@ test:
 	venv/bin/pytest
 
 coverage:
-	venv/bin/pytest --cov=models --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
+	venv/bin/pytest --cov=app.models --cov=app.storage --cov=app.votes --cov-report=term-missing --cov-fail-under=80
 
 lint:
-	venv/bin/ruff check *.py deploy handlers tests
-	venv/bin/ruff format --check *.py deploy handlers tests
+	venv/bin/ruff check app deploy tests
+	venv/bin/ruff format --check app deploy tests
 
 format:
-	venv/bin/ruff format *.py deploy handlers tests
-	venv/bin/ruff check --fix *.py deploy handlers tests
+	venv/bin/ruff format app deploy tests
+	venv/bin/ruff check --fix app deploy tests
 
 stage:
-	./run_stage.sh
+	./scripts/run_stage.sh

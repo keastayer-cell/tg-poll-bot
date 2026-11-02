@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 from telegram.error import TelegramError
 
-from health import HealthReporter
-from scheduling import SchedulerManager
+from app.health import HealthReporter
+from app.scheduling import SchedulerManager
 
 
 class HealthyBot:

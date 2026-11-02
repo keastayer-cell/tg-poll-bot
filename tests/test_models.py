@@ -1,7 +1,7 @@
 import pytest
 
-from models import BotSnapshot, new_poll_state, snapshot_from_json
-from scheduling import DEFAULT_SCHEDULE
+from app.models import BotSnapshot, new_poll_state, snapshot_from_json
+from app.scheduling import DEFAULT_SCHEDULE
 
 
 def test_legacy_snapshot_is_migrated_to_typed_runtime_shape():

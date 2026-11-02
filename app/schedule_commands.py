@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from scheduling import SETDAYS_KEYS, SETTIME_KEYS, VALID_DAYS
+from app.scheduling import SETDAYS_KEYS, SETTIME_KEYS, VALID_DAYS
 
 
 class ScheduleAdminCommands:

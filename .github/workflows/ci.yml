@@ -30,13 +30,13 @@ jobs:
           python -m pip check
 
       - name: Lint
-        run: ruff check *.py deploy handlers tests
+        run: ruff check app deploy tests
 
       - name: Check formatting
-        run: ruff format --check *.py deploy handlers tests
+        run: ruff format --check app deploy tests
 
       - name: Run tests
-        run: pytest --cov=models --cov=storage --cov=votes --cov-report=term-missing --cov-fail-under=80
+        run: pytest --cov=app.models --cov=app.storage --cov=app.votes --cov-report=term-missing --cov-fail-under=80
 
       - name: Compile application
-        run: python -m py_compile *.py deploy/*.py handlers/*.py
+        run: python -m compileall -q app deploy

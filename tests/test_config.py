@@ -1,6 +1,6 @@
 import pytest
 
-from config import SettingsError, load_settings
+from app.config import SettingsError, load_settings
 
 
 def valid_env():

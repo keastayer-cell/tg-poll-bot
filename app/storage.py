@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from models import BotSnapshot, ScheduleConfig, snapshot_from_json
+from app.models import BotSnapshot, ScheduleConfig, snapshot_from_json
 
 
 class StateLoadError(RuntimeError):

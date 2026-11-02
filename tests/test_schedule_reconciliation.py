@@ -1,8 +1,8 @@
 import asyncio
 from datetime import datetime
 
-import bot as bot
-from scheduling import SchedulerManager
+from app import bot
+from app.scheduling import SchedulerManager
 
 from .fakes import FakeBot
 

@@ -1,8 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
-import bot as bot
-from handlers.polls import PollHandlers
+from app import bot
+from app.handlers.polls import PollHandlers
 
 from .fakes import FakeBot
 

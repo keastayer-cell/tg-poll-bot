@@ -17,19 +17,19 @@ from telegram.ext import (
     filters,
 )
 
-from announcements import AnnouncementManager
-from config import load_settings
-from handlers.polls import PollHandlers
-from handlers.votes import VoteHandlers
-from health import HealthReporter
-from models import new_poll_state as build_poll_state
-from schedule_commands import ScheduleAdminCommands
-from scheduling import (
+from app.announcements import AnnouncementManager
+from app.config import load_settings
+from app.handlers.polls import PollHandlers
+from app.handlers.votes import VoteHandlers
+from app.health import HealthReporter
+from app.models import new_poll_state as build_poll_state
+from app.schedule_commands import ScheduleAdminCommands
+from app.scheduling import (
     DEFAULT_SCHEDULE,
     SchedulerManager,
 )
-from storage import BotRuntime, JsonStateRepository
-from votes import (
+from app.storage import BotRuntime, JsonStateRepository
+from app.votes import (
     admin_poll_started,
     current_telegram_yes_count,
     current_yes_count,
@@ -39,7 +39,7 @@ from votes import (
     poll_instruction,
 )
 
-_BASE_DIR = str(Path(__file__).resolve().parent)
+_BASE_DIR = str(Path(__file__).resolve().parents[1])
 settings = load_settings(_BASE_DIR)
 settings.data_dir.mkdir(parents=True, exist_ok=True)
 

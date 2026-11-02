@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from models import ManualVote, NotificationEvent, normalize_manual_vote
+from app.models import ManualVote, NotificationEvent, normalize_manual_vote
 
 INVISIBLE_MESSAGE_CHARACTERS = str.maketrans(
     {"\u200b": None, "\u200c": None, "\u200d": None, "\ufeff": None}

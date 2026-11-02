@@ -1,6 +1,6 @@
 import asyncio
 
-import bot as bot
+from app import bot
 
 from .fakes import FakeBot
 

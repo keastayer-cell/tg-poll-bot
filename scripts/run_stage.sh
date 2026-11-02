@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 ENV_PATH="$PROJECT_DIR/.env.stage"
 PID_FILE="$PROJECT_DIR/.stage-bot.pid"
@@ -27,4 +27,4 @@ fi
 
 echo "$$" > "$PID_FILE"
 cd "$PROJECT_DIR"
-exec env ENV_FILE=.env.stage "$PYTHON_BIN" main.py
+exec env ENV_FILE=.env.stage "$PYTHON_BIN" -m app

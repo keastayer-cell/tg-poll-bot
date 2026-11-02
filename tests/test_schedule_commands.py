@@ -1,8 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
-from schedule_commands import ScheduleAdminCommands
-from scheduling import DEFAULT_SCHEDULE
+from app.schedule_commands import ScheduleAdminCommands
+from app.scheduling import DEFAULT_SCHEDULE
 
 from .fakes import FakeBot, make_update
 

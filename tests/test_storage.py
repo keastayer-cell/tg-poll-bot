@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from storage import JsonStateRepository, StateLoadError
+from app.storage import JsonStateRepository, StateLoadError
 
 
 def test_atomic_save_and_load(tmp_path):

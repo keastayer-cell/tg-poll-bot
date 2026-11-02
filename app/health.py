@@ -3,7 +3,7 @@ from typing import Optional
 
 from telegram.error import TelegramError
 
-from storage import JsonStateRepository
+from app.storage import JsonStateRepository
 
 
 class HealthReporter:

@@ -1,9 +1,9 @@
 import asyncio
 from types import SimpleNamespace
 
-from handlers.votes import VoteHandlers
-from models import normalize_manual_vote
-from votes import add_manual_yes_vote, manual_vote_labels, remove_manual_yes_vote
+from app.handlers.votes import VoteHandlers
+from app.models import normalize_manual_vote
+from app.votes import add_manual_yes_vote, manual_vote_labels, remove_manual_yes_vote
 
 from .fakes import FakeBot, make_update
 

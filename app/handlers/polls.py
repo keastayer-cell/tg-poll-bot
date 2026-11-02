@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from votes import current_telegram_yes_count
+from app.votes import current_telegram_yes_count
 
 
 class PollHandlers:

@@ -57,7 +57,7 @@ jobs:
           source: "announcements.py,bot.py,main.py,config.py,health.py,models.py,schedule_commands.py,scheduling.py,storage.py,votes.py,handlers,deploy/check_bot_health.py,requirements.txt"
           target: /opt/bot_tg
 
-      - name: Restart and verify bot
+      - name: Install dependencies and verify deployment
         uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -67,7 +67,16 @@ jobs:
             set -euo pipefail
             cd /opt/bot_tg
             venv/bin/pip install -q -r requirements.txt
+            venv/bin/python -m pip check
             venv/bin/python -m py_compile *.py handlers/*.py deploy/*.py
+            if [ ! -f /opt/bot_tg/.allow-deploy-start ]; then
+              if systemctl is-active --quiet tg-poll-bot; then
+                echo "Bot is running but deployment start is not authorized"
+                exit 1
+              fi
+              echo "Files deployed; bot remains stopped (no .allow-deploy-start marker)"
+              exit 0
+            fi
             export BOT_HEALTH_FILE=/opt/bot_tg/health.json
             export BOT_HEALTH_NOT_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%S%z)"
             systemctl restart tg-poll-bot

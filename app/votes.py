@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -21,12 +22,13 @@ def display_user_name(user) -> str:
 
 def parse_plus_one(text: str, author_name: str) -> Optional[str]:
     normalized = text.translate(INVISIBLE_MESSAGE_CHARACTERS).strip()
-    if normalized == "+1":
-        return f"Гость от {author_name}"
-    if not normalized.startswith("+1"):
+    prefix = re.match(r"\+\s*1", normalized)
+    if prefix is None:
         return None
-    guest_name = normalized[2:].strip()
-    if not guest_name or not guest_name[0].isalpha():
+    guest_name = normalized[prefix.end() :].strip()
+    if not guest_name:
+        return f"Гость от {author_name}"
+    if not guest_name[0].isalpha():
         return None
     return " ".join(guest_name.split())
 

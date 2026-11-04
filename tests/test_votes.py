@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.votes import (
     add_manual_yes_vote,
     manual_vote_labels,
@@ -55,6 +57,12 @@ def test_bare_plus_one_uses_sender_name():
     assert parse_plus_one("+1", "Stayer") == "Гость от Stayer"
 
 
+@pytest.mark.parametrize("text", ["+ 1 Лонсков", "+\u00a01 Лонсков", "+\t1Лонсков"])
+def test_named_plus_one_accepts_whitespace_between_plus_and_one(text):
+    assert parse_plus_one(text, "Stayer") == "Лонсков"
+
+
 def test_plus_one_inside_sentence_is_ignored():
     assert parse_plus_one("Со мной будет +1 Иванов", "Stayer") is None
     assert parse_plus_one("+12", "Stayer") is None
+    assert parse_plus_one("+ 12 Лонсков", "Stayer") is None

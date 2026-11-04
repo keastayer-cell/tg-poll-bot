@@ -84,6 +84,19 @@ def test_named_plus_one_with_single_space_is_handled():
     assert "Трактин" in update.message.replies[0]["text"]
 
 
+def test_spaced_plus_one_from_non_admin_is_counted_once():
+    state, context, handlers = prepare_context()
+    update = make_update("+ 1 Лонсков", user_id=77)
+
+    asyncio.run(handlers.plain_text(update, context))
+
+    assert manual_vote_labels(state) == ["Лонсков"]
+    assert state["manual_yes_seq"] == 1
+    assert next(iter(state["manual_yes_voters"].values()))["added_by_user_id"] == 77
+    assert len(update.message.replies) == 1
+    assert "Лонсков" in update.message.replies[0]["text"]
+
+
 def test_unrelated_text_is_ignored():
     state, context, handlers = prepare_context()
     update = make_update("Со мной будет +1")
